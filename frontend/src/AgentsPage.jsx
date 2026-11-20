@@ -1,0 +1,515 @@
+import { useEffect, useState } from "react";
+import {
+  Bot,
+  Plus,
+  RefreshCw,
+  Power,
+  ShieldCheck,
+  ShoppingCart,
+  Store,
+  AlertCircle,
+  LoaderCircle
+} from "lucide-react";
+
+import "./AgentsPage.css";
+
+const API = "http://localhost:5000/api";
+
+export default function AgentsPage() {
+  const [agents, setAgents] = useState([]);
+  const [owners, setOwners] = useState([]);
+
+  const [ownerId, setOwnerId] = useState("");
+  const [agentName, setAgentName] = useState("");
+  const [agentRole, setAgentRole] = useState("buyer");
+
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [updatingId, setUpdatingId] = useState("");
+
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  // LOAD OWNERS AND AGENTS
+  async function loadData() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const [agentsResponse, ownersResponse] = await Promise.all([
+        fetch(`${API}/agents`),
+        fetch(`${API}/users`)
+      ]);
+
+      if (!agentsResponse.ok || !ownersResponse.ok) {
+        throw new Error("Failed to load BATN data.");
+      }
+
+      const agentsData = await agentsResponse.json();
+      const ownersData = await ownersResponse.json();
+
+      setAgents(agentsData);
+      setOwners(ownersData);
+
+      if (ownersData.length > 0 && !ownerId) {
+        setOwnerId(ownersData[0].id);
+      }
+    } catch (err) {
+      setError(err.message || "Unable to connect to BATN backend.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // CREATE AGENT
+  async function createAgent(e) {
+    e.preventDefault();
+
+    setError("");
+    setMessage("");
+
+    if (!ownerId) {
+      setError("Please select an owner.");
+      return;
+    }
+
+    if (!agentName.trim()) {
+      setError("Please enter an agent name.");
+      return;
+    }
+
+    setCreating(true);
+
+    try {
+      const response = await fetch(`${API}/agents`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          owner_id: ownerId,
+          name: agentName.trim(),
+          role: agentRole
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Agent creation failed.");
+      }
+
+      setMessage(`${agentName.trim()} created successfully.`);
+      setAgentName("");
+
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  // CHANGE AGENT STATUS
+  async function toggleStatus(agent) {
+    setError("");
+    setMessage("");
+    setUpdatingId(agent.id);
+
+    const newStatus =
+      agent.status === "active" ? "inactive" : "active";
+
+    try {
+      const response = await fetch(
+        `${API}/agents/${agent.id}/status`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            status: newStatus
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Status update failed.");
+      }
+
+      setMessage(`${agent.name} is now ${newStatus}.`);
+
+      await loadData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdatingId("");
+    }
+  }
+
+  // COUNTS
+  const activeCount = agents.filter(
+    (agent) => agent.status === "active"
+  ).length;
+
+  const buyerCount = agents.filter(
+    (agent) => agent.role === "buyer"
+  ).length;
+
+  const sellerCount = agents.filter(
+    (agent) => agent.role === "seller"
+  ).length;
+
+  return (
+    <div className="agents-page">
+
+      {/* HEADER */}
+      <div className="agents-header">
+        <div>
+          <div className="agents-eyebrow">
+            <Bot size={16} />
+            BATN AGENT NETWORK
+          </div>
+
+          <h1>Agent Management</h1>
+
+          <p>
+            Create, monitor and control your transaction agents.
+          </p>
+        </div>
+
+        <button
+          className="agents-refresh"
+          onClick={loadData}
+          disabled={loading}
+        >
+          <RefreshCw size={16} />
+          Refresh
+        </button>
+      </div>
+
+      {/* STATISTICS */}
+      <div className="agents-stats">
+
+        <div className="agent-stat-card">
+          <div className="agent-stat-icon blue">
+            <Bot size={20} />
+          </div>
+
+          <div>
+            <span>Total agents</span>
+            <h2>{agents.length}</h2>
+          </div>
+        </div>
+
+        <div className="agent-stat-card">
+          <div className="agent-stat-icon green">
+            <ShieldCheck size={20} />
+          </div>
+
+          <div>
+            <span>Active agents</span>
+            <h2>{activeCount}</h2>
+          </div>
+        </div>
+
+        <div className="agent-stat-card">
+          <div className="agent-stat-icon purple">
+            <ShoppingCart size={20} />
+          </div>
+
+          <div>
+            <span>Buyer agents</span>
+            <h2>{buyerCount}</h2>
+          </div>
+        </div>
+
+        <div className="agent-stat-card">
+          <div className="agent-stat-icon orange">
+            <Store size={20} />
+          </div>
+
+          <div>
+            <span>Seller agents</span>
+            <h2>{sellerCount}</h2>
+          </div>
+        </div>
+
+      </div>
+
+      {/* NOTIFICATIONS */}
+      {error && (
+        <div className="agents-alert error">
+          <AlertCircle size={18} />
+          {error}
+        </div>
+      )}
+
+      {message && (
+        <div className="agents-alert success">
+          <ShieldCheck size={18} />
+          {message}
+        </div>
+      )}
+
+      {/* MAIN CONTENT */}
+      <div className="agents-content">
+
+        {/* CREATE AGENT */}
+        <section className="agents-panel create-agent-panel">
+
+          <div className="agents-panel-heading">
+            <div className="agents-heading-icon">
+              <Plus size={20} />
+            </div>
+
+            <div>
+              <h2>Create Agent</h2>
+              <p>Register a new BATN transaction agent.</p>
+            </div>
+          </div>
+
+          {owners.length === 0 ? (
+            <div className="agents-empty-owner">
+              <AlertCircle size={20} />
+
+              <p>
+                No owners found. Register an owner through
+                the backend before creating agents.
+              </p>
+            </div>
+          ) : (
+            <form onSubmit={createAgent}>
+
+              <label>Agent owner</label>
+
+              <select
+                value={ownerId}
+                onChange={(e) => setOwnerId(e.target.value)}
+                required
+              >
+                {owners.map((owner) => (
+                  <option key={owner.id} value={owner.id}>
+                    {owner.name}
+                    {owner.email ? ` — ${owner.email}` : ""}
+                  </option>
+                ))}
+              </select>
+
+              <label>Agent name</label>
+
+              <input
+                type="text"
+                placeholder="e.g. Nia Purchasing Agent"
+                value={agentName}
+                onChange={(e) => setAgentName(e.target.value)}
+                maxLength={100}
+                required
+              />
+
+              <label>Agent role</label>
+
+              <div className="agent-role-selector">
+
+                <button
+                  type="button"
+                  className={
+                    agentRole === "buyer"
+                      ? "role-option selected"
+                      : "role-option"
+                  }
+                  onClick={() => setAgentRole("buyer")}
+                >
+                  <ShoppingCart size={19} />
+
+                  <div>
+                    <strong>Buyer</strong>
+                    <span>Purchases</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  className={
+                    agentRole === "seller"
+                      ? "role-option selected"
+                      : "role-option"
+                  }
+                  onClick={() => setAgentRole("seller")}
+                >
+                  <Store size={19} />
+
+                  <div>
+                    <strong>Seller</strong>
+                    <span>Sells</span>
+                  </div>
+                </button>
+
+              </div>
+
+              <button
+                type="submit"
+                className="create-agent-button"
+                disabled={creating || loading}
+              >
+                {creating ? (
+                  <>
+                    <LoaderCircle size={17} />
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <Plus size={17} />
+                    Create agent
+                  </>
+                )}
+              </button>
+
+            </form>
+          )}
+
+        </section>
+
+        {/* AGENT LIST */}
+        <section className="agents-panel agent-list-panel">
+
+          <div className="agents-panel-heading">
+            <div className="agents-heading-icon">
+              <Bot size={20} />
+            </div>
+
+            <div>
+              <h2>Registered agents</h2>
+              <p>Your agents and their current status.</p>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="agents-loading">
+              <LoaderCircle size={25} />
+              Loading agents...
+            </div>
+          ) : agents.length === 0 ? (
+            <div className="agents-empty">
+              <Bot size={35} />
+
+              <p>No agents registered yet.</p>
+
+              <span>Create your first agent to get started.</span>
+            </div>
+          ) : (
+            <div className="agent-list">
+
+              {agents.map((agent) => (
+
+                <div className="agent-card" key={agent.id}>
+
+                  <div className="agent-card-main">
+
+                    <div
+                      className={`agent-avatar ${
+                        agent.role === "buyer"
+                          ? "buyer-avatar"
+                          : "seller-avatar"
+                      }`}
+                    >
+                      {agent.role === "buyer" ? (
+                        <ShoppingCart size={21} />
+                      ) : (
+                        <Store size={21} />
+                      )}
+                    </div>
+
+                    <div className="agent-details">
+
+                      <h3>{agent.name}</h3>
+
+                      <span className="agent-owner">
+                        Owner: {agent.owner_name || "Unknown"}
+                      </span>
+
+                      <span
+                        className={`agent-role-tag ${
+                          agent.role === "buyer"
+                            ? "buyer-tag"
+                            : "seller-tag"
+                        }`}
+                      >
+                        {agent.role}
+                      </span>
+
+                    </div>
+
+                  </div>
+
+                  <div className="agent-card-controls">
+
+                    <span
+                      className={`agent-status ${
+                        agent.status === "active"
+                          ? "active-status"
+                          : "inactive-status"
+                      }`}
+                    >
+                      <span className="status-dot"></span>
+                      {agent.status}
+                    </span>
+
+                    <button
+                      className={`agent-toggle ${
+                        agent.status === "active"
+                          ? "deactivate-button"
+                          : "activate-button"
+                      }`}
+                      onClick={() => toggleStatus(agent)}
+                      disabled={updatingId === agent.id}
+                    >
+                      {updatingId === agent.id ? (
+                        <LoaderCircle size={16} />
+                      ) : (
+                        <Power size={16} />
+                      )}
+
+                      {agent.status === "active"
+                        ? "Deactivate"
+                        : "Activate"}
+                    </button>
+
+                  </div>
+
+                </div>
+
+              ))}
+
+            </div>
+          )}
+
+        </section>
+
+      </div>
+
+      {/* FOOTER NOTICE */}
+      <div className="agents-security-note">
+        <ShieldCheck size={19} />
+
+        <div>
+          <strong>Agent control layer</strong>
+
+          <p>
+            Agents are currently managed through BATN's backend.
+            Activation is an administrative status and does not
+            grant payment permissions. Authorization rules and
+            transaction controls will be implemented separately.
+          </p>
+        </div>
+      </div>
+
+    </div>
+  );
+}
