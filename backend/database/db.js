@@ -23,7 +23,7 @@ const schema = fs.readFileSync(schemaPath, "utf8");
 db.exec(schema);
 
 // Apply additive, idempotent payment migrations without replacing existing records.
-require("../payments/migrate")();
+require("../payments/migrate")(db);
 
 console.log("BATN database initialized.");
 
