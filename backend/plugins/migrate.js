@@ -39,9 +39,11 @@ function migratePlugins(db) {
     "audit_logs"
   ];
   for (const table of ownershipTables) ensureColumn(db, table, "marketplace_id", "TEXT");
+  ensureColumn(db, "users", "external_id", "TEXT");
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_users_marketplace ON users(marketplace_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_marketplace_external ON users(marketplace_id, external_id) WHERE external_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_agents_marketplace ON agents(marketplace_id);
     CREATE INDEX IF NOT EXISTS idx_mandates_marketplace ON agent_mandates(marketplace_id);
     CREATE INDEX IF NOT EXISTS idx_negotiations_marketplace ON negotiations(marketplace_id);
