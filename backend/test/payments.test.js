@@ -88,3 +88,23 @@ test("invalid state transition is rejected and audited", async () => {
   assert.equal(service.getPayment(payment.id).status, "initiated");
   assert.ok(db.prepare("SELECT 1 FROM payment_events WHERE payment_id=? AND type='invalid_transition'").get(payment.id));
 });
+
+test("failed payment can be retried with a fresh idempotency suffix", async () => {
+  const negotiationId = fixture();
+  const first = await service.createAndInitiatePayment(negotiationId, "0712345678");
+  service.provider.setStatus(first.provider_reference, "FAILED");
+  await service.handleCallback({ response: { Amount: 400, ExternalReference: first.id, Status: "Failed", ResultCode: 1, ResultDesc: "Declined" } });
+  assert.equal(service.getPayment(first.id).status, "failed");
+  const retry = await service.createAndInitiatePayment(negotiationId, "0712345678", { allowRetry: true });
+  assert.equal(retry.id, first.id);
+  assert.equal(retry.status, "initiated");
+  assert.equal(retry.attempt_count, 2);
+  assert.match(retry.idempotency_key, /:attempt:2$/);
+});
+
+test("cancelled mock callback moves an initiated payment to cancelled", async () => {
+  const negotiationId = fixture();
+  const payment = await service.createAndInitiatePayment(negotiationId, "0712345678");
+  await service.handleCallback({ response: { Amount: 400, ExternalReference: payment.id, Status: "Cancelled", ResultCode: 1032, ResultDesc: "Cancelled by user" } });
+  assert.equal(service.getPayment(payment.id).status, "cancelled");
+});
