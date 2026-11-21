@@ -297,4 +297,63 @@ router.get("/negotiations/:negotiationId/messages", requirePluginKey, (req, res)
   res.json({ negotiation_id: negotiation.id, count: messages.length, messages });
 });
 
+router.get("/risk/review-queue", requirePluginKey, (req, res) => {
+  const reviews = db.prepare(`
+    SELECT r.id, r.negotiation_id, r.risk_score, r.risk_level, r.flags, r.decision,
+           r.reviewed, r.created_at, n.item_description, n.quantity, n.initial_offer,
+           n.status AS negotiation_status, b.name AS buyer_name, s.name AS seller_name
+    FROM risk_assessments r
+    JOIN negotiations n ON n.id = r.negotiation_id
+    JOIN agents b ON b.id = n.buyer_agent_id
+    JOIN agents s ON s.id = n.seller_agent_id
+    WHERE r.marketplace_id = ? AND r.decision = 'review' AND r.reviewed = 0
+      AND n.status = 'pending_risk_review'
+    ORDER BY r.created_at ASC LIMIT 200
+  `).all(req.marketplace.id).map(row => ({ ...row, flags: JSON.parse(row.flags || "[]") }));
+  res.json({ count: reviews.length, reviews });
+});
+
+router.post("/negotiations/:negotiationId/risk-review", requirePluginKey, (req, res) => {
+  const { action, reviewer, notes } = req.body || {};
+  if (!["approve", "reject"].includes(action) || typeof reviewer !== "string" || !reviewer.trim()) {
+    return res.status(400).json({ error: { code: "INVALID_REVIEW", message: "action (approve/reject) and reviewer are required." } });
+  }
+  const negotiation = db.prepare("SELECT * FROM negotiations WHERE id = ? AND marketplace_id = ?")
+    .get(req.params.negotiationId, req.marketplace.id);
+  if (!negotiation || negotiation.status !== "pending_risk_review") {
+    return res.status(404).json({ error: { code: "REVIEW_NOT_FOUND", message: "Negotiation is not awaiting risk review in this marketplace." } });
+  }
+  const risk = db.prepare("SELECT * FROM risk_assessments WHERE negotiation_id = ? AND marketplace_id = ?")
+    .get(negotiation.id, req.marketplace.id);
+  if (!risk || risk.decision !== "review" || risk.reviewed !== 0) {
+    return res.status(409).json({ error: { code: "RISK_ALREADY_REVIEWED", message: "Risk assessment is not awaiting review." } });
+  }
+
+  const candidatePrice = negotiation.initial_offer >= negotiation.seller_min_price
+    ? negotiation.initial_offer : negotiation.seller_min_price;
+  const mandates = db.prepare(`
+    SELECT b.requires_approval AS buyer_approval, s.requires_approval AS seller_approval
+    FROM agent_mandates b JOIN agent_mandates s ON s.agent_id = ?
+    WHERE b.agent_id = ? AND b.marketplace_id = ? AND s.marketplace_id = ?
+  `).get(negotiation.seller_agent_id, negotiation.buyer_agent_id, req.marketplace.id, req.marketplace.id);
+  const requiresApproval = !!(mandates && (mandates.buyer_approval || mandates.seller_approval));
+  const status = action === "reject" ? "rejected" : (requiresApproval ? "pending_approval" : "accepted");
+  const finalPrice = action === "approve" ? candidatePrice : null;
+  const reviewNotes = typeof notes === "string" ? notes.trim().slice(0, 2000) : null;
+
+  const apply = db.transaction(() => {
+    db.prepare("UPDATE negotiations SET status = ?, final_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND marketplace_id = ?")
+      .run(status, finalPrice, negotiation.id, req.marketplace.id);
+    db.prepare("UPDATE negotiation_sessions SET status = ?, agreed_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND marketplace_id = ?")
+      .run(status, finalPrice, negotiation.id, req.marketplace.id);
+    db.prepare("UPDATE risk_assessments SET reviewed = 1, review_notes = ?, decision = ?, updated_at = CURRENT_TIMESTAMP WHERE negotiation_id = ? AND marketplace_id = ?")
+      .run(reviewNotes, action === "approve" ? "allow" : "block", negotiation.id, req.marketplace.id);
+    db.prepare("INSERT INTO audit_logs (id,actor,action,entity_type,entity_id,details,marketplace_id) VALUES (?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), reviewer.trim(), action === "approve" ? "risk_review_approved" : "risk_review_rejected",
+        "negotiation", negotiation.id, JSON.stringify({ reviewer: reviewer.trim(), notes: reviewNotes }), req.marketplace.id);
+  });
+  apply();
+  res.json({ negotiation_id: negotiation.id, action, status, final_price: finalPrice, requires_owner_approval: requiresApproval });
+});
+
 module.exports = router;
