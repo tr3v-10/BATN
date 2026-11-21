@@ -24,7 +24,7 @@ router.post("/initiate", initiateLimiter, async (req, res) => {
     const payment = await service.createAndInitiatePayment(negotiationId, phone);
     return res.status(200).json({ payment });
   } catch (e) {
-    const map = { NEGOTIATION_NOT_FOUND:404, NEGOTIATION_NOT_PAYABLE:409, OWNER_APPROVAL_REQUIRED:403, RISK_REVIEW_REQUIRED:403, PAYMENT_CANCELLED:409, INVALID_TRANSITION:409 };
+    const map = { NEGOTIATION_NOT_FOUND:404, NEGOTIATION_NOT_PAYABLE:409, OWNER_APPROVAL_REQUIRED:403, RISK_REVIEW_REQUIRED:403, PAYMENT_CANCELLED:409, INVALID_TRANSITION:409, MANUAL_RECONCILIATION_REQUIRED:409 };
     return fail(res, map[e.code] || 400, e.code || "PAYMENT_ERROR", e.message || "Unable to initiate payment.");
   }
 });
