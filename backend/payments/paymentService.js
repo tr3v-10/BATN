@@ -24,10 +24,11 @@ function addEvent(paymentId, type, payload = null) {
 }
 
 function audit(paymentId, action, details = {}) {
+  const payment = db.prepare("SELECT marketplace_id FROM payment_intents WHERE id = ?").get(paymentId);
   db.prepare(`
-    INSERT INTO audit_logs (id, actor, action, entity_type, entity_id, details)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(randomUUID(), "JADILI Payment Service", action, "payment_intent", paymentId, JSON.stringify(details));
+    INSERT INTO audit_logs (id, actor, action, entity_type, entity_id, details, marketplace_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(randomUUID(), "JADILI Payment Service", action, "payment_intent", paymentId, JSON.stringify(details), payment?.marketplace_id ?? null);
 }
 
 function transition(payment, next, fields = {}) {
@@ -96,10 +97,10 @@ async function createAndInitiatePayment(negotiationId, phone, options = {}) {
     db.prepare(`
       INSERT INTO payment_intents (
         id, negotiation_id, buyer_agent_id, seller_agent_id, amount,
-        currency, provider, idempotency_key, status, phone, attempt_count
-      ) VALUES (?, ?, ?, ?, ?, 'KES', ?, ?, 'pending', ?, 1)
+        currency, provider, idempotency_key, status, phone, attempt_count, marketplace_id
+      ) VALUES (?, ?, ?, ?, ?, 'KES', ?, ?, 'pending', ?, 1, ?)
     `).run(id, negotiation.id, negotiation.buyer_agent_id, negotiation.seller_agent_id,
-      amount, process.env.PAYMENT_PROVIDER || "mock", key, maskKenyanPhone(normalizedPhone));
+      amount, process.env.PAYMENT_PROVIDER || "mock", key, maskKenyanPhone(normalizedPhone), negotiation.marketplace_id ?? null);
     payment = getPayment(id);
     addEvent(id, "created", { negotiationId, amount, provider: payment.provider });
     audit(id, "payment_created", { negotiationId, amount, provider: payment.provider });
@@ -168,9 +169,9 @@ function syncTracking(payment) {
   if (!tracking) {
     const id = randomUUID();
     db.prepare(`
-      INSERT INTO transaction_tracking (id, negotiation_id, payment_intent_id, transaction_status)
-      VALUES (?, ?, ?, ?)
-    `).run(id, payment.negotiation_id, payment.id, next);
+      INSERT INTO transaction_tracking (id, negotiation_id, payment_intent_id, transaction_status, marketplace_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, payment.negotiation_id, payment.id, next, payment.marketplace_id ?? null);
     tracking = { id };
   } else {
     db.prepare(`
