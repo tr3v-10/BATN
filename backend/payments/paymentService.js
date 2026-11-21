@@ -68,12 +68,33 @@ function eligibleNegotiation(negotiationId) {
   const mandates = db.prepare(`
     SELECT b.requires_approval AS buyer_approval, s.requires_approval AS seller_approval
     FROM negotiations n
-    JOIN agent_mandates b ON b.agent_id = n.buyer_agent_id
-    JOIN agent_mandates s ON s.agent_id = n.seller_agent_id
+    LEFT JOIN agent_mandates b ON b.agent_id = n.buyer_agent_id
+    LEFT JOIN agent_mandates s ON s.agent_id = n.seller_agent_id
     WHERE n.id = ?
   `).get(negotiationId);
-  if (!mandates || mandates.buyer_approval || mandates.seller_approval) {
-    throw Object.assign(new Error("Owner approval must be completed before payment."), { code: "OWNER_APPROVAL_REQUIRED" });
+
+  if (!mandates) {
+    throw Object.assign(new Error("Agent mandates could not be verified for this deal."), { code: "MANDATE_NOT_FOUND" });
+  }
+
+  // A mandate flag means an owner decision is required, not that payment
+  // must remain blocked forever. The owner-approval route writes this
+  // immutable audit event when it records an authorized approval.
+  const requiresOwnerApproval = Number(mandates.buyer_approval) === 1 ||
+    Number(mandates.seller_approval) === 1;
+  if (requiresOwnerApproval) {
+    const approved = db.prepare(`
+      SELECT id
+      FROM audit_logs
+      WHERE entity_type = 'negotiation'
+        AND entity_id = ?
+        AND action = 'owner_approval_granted'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(negotiationId);
+    if (!approved) {
+      throw Object.assign(new Error("Owner approval must be completed before payment."), { code: "OWNER_APPROVAL_REQUIRED" });
+    }
   }
   return negotiation;
 }
