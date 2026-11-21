@@ -285,5 +285,5 @@ async function reconcile() {
 
 module.exports = {
   createAndInitiatePayment, handleCallback, reconcile, getPayment,
-  provider, transitions, syncTracking, addEvent, audit
+  provider, transitions, transition, syncTracking, addEvent, audit
 };
