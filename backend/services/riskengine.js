@@ -16,6 +16,7 @@ function assessRisk(negotiation) {
     seller_status,
     buyer_max_total,
     seller_max_total,
+    marketplace_id,
   } = negotiation;
 
   // RULE 1: Inactive agents
@@ -44,11 +45,13 @@ function assessRisk(negotiation) {
       AND LOWER(item_description) = LOWER(?)
       AND created_at >= datetime('now', '-10 minutes')
       AND id != ?
+      AND marketplace_id IS ?
   `).get(
     buyer_agent_id,
     seller_agent_id,
     item_description,
-    id
+    id,
+    marketplace_id ?? null
   );
 
   if (repeated.count >= 2) {
@@ -63,7 +66,8 @@ function assessRisk(negotiation) {
     WHERE buyer_agent_id = ?
       AND created_at >= datetime('now', '-5 minutes')
       AND id != ?
-  `).get(buyer_agent_id, id);
+      AND marketplace_id IS ?
+  `).get(buyer_agent_id, id, marketplace_id ?? null);
 
   if (buyerActivity.count >= 3) {
     flags.push("High buyer negotiation activity");
@@ -77,7 +81,8 @@ function assessRisk(negotiation) {
     WHERE seller_agent_id = ?
       AND created_at >= datetime('now', '-5 minutes')
       AND id != ?
-  `).get(seller_agent_id, id);
+      AND marketplace_id IS ?
+  `).get(seller_agent_id, id, marketplace_id ?? null);
 
   if (sellerActivity.count >= 3) {
     flags.push("High seller negotiation activity");
@@ -141,9 +146,10 @@ function saveRiskAssessment(assessment) {
       risk_score,
       risk_level,
       flags,
-      decision
+      decision,
+      marketplace_id
     )
-    VALUES (?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
   insert.run(
@@ -152,7 +158,8 @@ function saveRiskAssessment(assessment) {
     assessment.risk_score,
     assessment.risk_level,
     JSON.stringify(assessment.flags),
-    assessment.decision
+    assessment.decision,
+    assessment.marketplace_id ?? null
   );
 }
 
