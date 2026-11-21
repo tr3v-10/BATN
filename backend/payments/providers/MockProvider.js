@@ -3,6 +3,7 @@ class MockProvider {
   setStatus(reference, status, extra = {}) { this.statuses.set(reference, { success: true, status, reference, ...extra }); }
 
   async initiatePayment({ paymentId }) {
+    this.statuses.set("MOCK-" + paymentId, { success: true, status: "QUEUED", reference: "MOCK-" + paymentId });
     return {
       success: true,
       status: "QUEUED",
