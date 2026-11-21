@@ -108,14 +108,19 @@ async function createAndInitiatePayment(negotiationId, phone, options = {}) {
     if (!options.allowRetry) return payment;
     if (payment.amount !== amount) throw new Error("Deal amount changed after the original payment attempt.");
     const nextAttempt = (payment.attempt_count || 1) + 1;
-    db.prepare(`
-      UPDATE payment_intents SET status = 'pending', provider = ?, idempotency_key = ?,
-        phone = ?, failure_reason = NULL, provider_reference = NULL,
-        checkout_request_id = NULL, mpesa_receipt = NULL, initiated_at = NULL,
-        completed_at = NULL, callback_received_at = NULL, attempt_count = ?,
-        updated_at = CURRENT_TIMESTAMP WHERE id = ?
-    `).run(process.env.PAYMENT_PROVIDER || "mock", negotiationId + ":attempt:" + nextAttempt,
-      maskKenyanPhone(normalizedPhone), nextAttempt, payment.id);
+    transition(payment, "pending", {
+      provider: process.env.PAYMENT_PROVIDER || "mock",
+      idempotency_key: negotiationId + ":attempt:" + nextAttempt,
+      phone: maskKenyanPhone(normalizedPhone),
+      failure_reason: null,
+      provider_reference: null,
+      checkout_request_id: null,
+      mpesa_receipt: null,
+      initiated_at: null,
+      completed_at: null,
+      callback_received_at: null,
+      attempt_count: nextAttempt
+    });
     payment = getPayment(payment.id);
     addEvent(payment.id, "retried", { attempt: nextAttempt });
     audit(payment.id, "payment_retried", { attempt: nextAttempt });
