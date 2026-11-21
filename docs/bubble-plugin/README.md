@@ -60,12 +60,13 @@ All plugin routes require `Authorization: Bearer <private JADILI API key>`, exce
 | GET | `/api/plugin/v1/negotiations/:negotiationId/messages` | Read negotiation message history |
 | GET | `/api/plugin/v1/risk/review-queue` | List negotiations awaiting risk review |
 | POST | `/api/plugin/v1/negotiations/:negotiationId/risk-review` | Approve/reject a risk review |
+| POST | `/api/plugin/v1/negotiations/:negotiationId/owner-approval` | Record the required buyer/seller owner approval |
 | POST | `/api/plugin/v1/payments/initiate` | Initiate payment for eligible accepted negotiation |
 | GET | `/api/plugin/v1/payments` | List marketplace payments |
 | GET | `/api/plugin/v1/payments/:paymentId` | Read payment and event history |
 | GET | `/api/plugin/v1/transactions` | List marketplace transaction tracking |
 
-User creation requires `name` and `external_user_id`; the external ID should be Bubble's stable `Current User's unique id`. Agent creation requires `owner_id`, `name`, and `role` (`buyer` or `seller`). Mandate fields mirror the existing JADILI mandate contract. Negotiation creation requires buyer/seller agent IDs, item description, quantity, and initial offer.
+User creation requires `name` and `external_user_id`; the external ID should be Bubble's stable `Current User's unique id`. Agent creation requires `owner_id`, `name`, and `role` (`buyer` or `seller`). Mandate fields mirror the existing JADILI mandate contract. Negotiation creation requires buyer/seller agent IDs, item description, quantity, and initial offer. If a mandate requires owner approval, the Bubble workflow should call the owner-approval endpoint with the Bubble user's external ID; the backend checks that the mapped user owns the relevant buyer or seller agent. Risk review and owner approval can happen in either order.
 
 Payment initiation uses `negotiation_id` and a Kenyan mobile number. It returns a masked phone number and payment status. Keep PayHero credentials on the JADILI backend only.
 
