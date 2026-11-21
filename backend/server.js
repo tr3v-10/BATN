@@ -1,4 +1,6 @@
 require("dotenv").config();
+const automationRoutes = require("./routes/automation");
+const automationEngine = require("./services/automationEngine");
 const riskRoutes = require("./routes/risk");
 const express = require("express");
 const cors = require("cors");
@@ -17,6 +19,7 @@ app.use("/api/negotiations", negotiationsRouter);
 app.use("/api/mandates", mandateRoutes);
 app.use("/api/risk", riskRoutes);
 app.use("/api/transactions", transactionRoutes);
+app.use("/api/automation", automationRoutes);
 // ------------------------------------
 // HELPER: WRITE TO AUDIT LOG
 // ------------------------------------
@@ -60,35 +63,60 @@ app.get("/api/status", (req, res) => {
 // ------------------------------------
 // DASHBOARD STATISTICS
 // ------------------------------------
+// ------------------------------------
+// DASHBOARD STATISTICS
+// ------------------------------------
 app.get("/api/dashboard", (req, res) => {
   try {
-    const totalTransactions = db.prepare(
-      "SELECT COUNT(*) AS count FROM transactions"
-    ).get().count;
+    const totalTransactions = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM transaction_tracking
+    `).get().count;
 
-    const completedTransactions = db.prepare(
-      "SELECT COUNT(*) AS count FROM transactions WHERE status = 'completed'"
-    ).get().count;
+    const completedTransactions = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM transaction_tracking
+      WHERE transaction_status = 'completed'
+    `).get().count;
 
-    const pendingTransactions = db.prepare(
-      "SELECT COUNT(*) AS count FROM transactions WHERE status = 'pending'"
-    ).get().count;
+    const pendingTransactions = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM transaction_tracking
+      WHERE transaction_status IN (
+        'agreement_reached',
+        'payment_pending',
+        'payment_initiated',
+        'payment_processing'
+      )
+    `).get().count;
 
-    const flaggedTransactions = db.prepare(
-      "SELECT COUNT(*) AS count FROM transactions WHERE status = 'review_required'"
-    ).get().count;
+    const flaggedTransactions = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM negotiations
+      WHERE status = 'pending_risk_review'
+    `).get().count;
 
-    const activeAgents = db.prepare(
-      "SELECT COUNT(*) AS count FROM agents WHERE status = 'active'"
-    ).get().count;
+    const activeAgents = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM agents
+      WHERE status = 'active'
+    `).get().count;
+
+    const totalVolume = db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM payment_intents
+      WHERE status = 'paid'
+    `).get().total;
 
     res.json({
       totalTransactions,
       completedTransactions,
       pendingTransactions,
       flaggedTransactions,
-      activeAgents
+      activeAgents,
+      totalVolume
     });
+
   } catch (error) {
     console.error("Dashboard error:", error.message);
 
@@ -370,6 +398,8 @@ app.get("/api/audit", (req, res) => {
 // ------------------------------------
 // START SERVER
 // ------------------------------------
+automationEngine.startScheduler();
+
 app.listen(PORT, () => {
   console.log(`BATN backend running on http://localhost:${PORT}`);
 });

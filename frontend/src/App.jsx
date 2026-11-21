@@ -1,6 +1,8 @@
 import AgentsPage from "./AgentsPage";
+import NegotiationLab from "./NegotiationLab";
 import TransactionsPage from "./TransactionsPage";
 import { useEffect, useState } from "react";
+
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -27,86 +29,115 @@ import {
 import "./App.css";
 
 const navigation = [
+  { label: "Negotiation Lab", icon: Zap },
   { label: "Overview", icon: LayoutDashboard },
   { label: "Transactions", icon: ArrowLeftRight },
   { label: "Agents", icon: Bot },
   { label: "Security", icon: ShieldCheck },
   { label: "Activity", icon: Activity },
 ];
-
-const demoTransactions = [
-  {
-    id: "BATN-1024",
-    name: "Nairobi Digital Supplies",
-    detail: "Office equipment",
-    amount: "KES 12,500",
-    status: "Completed",
-    date: "Today, 09:42",
-    icon: ArrowUpRight,
-  },
-  {
-    id: "BATN-1023",
-    name: "Green Basket Market",
-    detail: "Weekly groceries",
-    amount: "KES 4,200",
-    status: "Pending",
-    date: "Today, 09:18",
-    icon: ArrowUpRight,
-  },
-  {
-    id: "BATN-1022",
-    name: "TechHub Solutions",
-    detail: "Laptop accessories",
-    amount: "KES 18,000",
-    status: "Review",
-    date: "Today, 08:56",
-    icon: ArrowUpRight,
-  },
-  {
-    id: "BATN-1021",
-    name: "Water Services",
-    detail: "Utility payment",
-    amount: "KES 2,800",
-    status: "Completed",
-    date: "Yesterday",
-    icon: ArrowUpRight,
-  },
-];
-
 function App() {
   const [activePage, setActivePage] = useState("Overview");
   const [dashboard, setDashboard] = useState(null);
+  const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    async function fetchDashboard() {
-      try {
-        const response = await fetch(
-          "http://localhost:5000/api/dashboard"
-        );
+   useEffect(() => {
+  async function fetchDashboardData() {
+    try {
+      const [dashboardResponse, transactionsResponse] =
+        await Promise.all([
+          fetch("http://localhost:5000/api/dashboard"),
+          fetch("http://localhost:5000/api/transactions"),
+        ]);
 
-        if (!response.ok) {
-          throw new Error("Dashboard request failed");
-        }
-
-        const data = await response.json();
-
-        setDashboard(data);
-        setApiError(false);
-      } catch (error) {
-        setApiError(true);
-      } finally {
-        setLoading(false);
+      if (!dashboardResponse.ok || !transactionsResponse.ok) {
+        throw new Error("Failed to fetch dashboard data");
       }
+
+      const dashboardData = await dashboardResponse.json();
+      const transactionData = await transactionsResponse.json();
+
+      setDashboard(dashboardData);
+
+      const records = transactionData.transactions || [];
+
+      setTransactions(
+        records.map((transaction) => {
+          const status =
+            transaction.transaction_status ||
+            transaction.payment_status ||
+            "unknown";
+
+          const formattedStatus =
+            status === "completed" || status === "paid"
+              ? "Completed"
+              : status === "payment_pending" ||
+                status === "payment_initiated" ||
+                status === "payment_processing" ||
+                status === "pending" ||
+                status === "initiated" ||
+                status === "processing"
+              ? "Pending"
+              : status === "payment_failed" ||
+                status === "failed" ||
+                status === "cancelled"
+              ? status === "cancelled"
+                ? "Cancelled"
+                : "Failed"
+              : status === "pending_risk_review" ||
+                status === "review_required"
+              ? "Review"
+              : status.replace(/_/g, " ");
+
+          return {
+            id: transaction.id,
+
+            name: `${transaction.buyer_name || "Buyer"} → ${
+              transaction.seller_name || "Seller"
+            }`,
+
+            detail: `${transaction.item_description || "Transaction"} · ${
+              transaction.quantity ?? 0
+            } units`,
+
+            amount: `${transaction.currency || "KES"} ${Number(
+              transaction.amount || 0
+            ).toLocaleString()}`,
+
+            status: formattedStatus,
+
+            date: transaction.created_at
+              ? new Date(
+                  transaction.created_at.replace(" ", "T") + "Z"
+                ).toLocaleString()
+              : "Unknown date",
+
+            icon: ArrowUpRight,
+          };
+        })
+      );
+
+      setApiError(false);
+    } catch (error) {
+      console.error("Dashboard fetch error:", error);
+      setApiError(true);
+    } finally {
+      setLoading(false);
     }
+  }
 
-    fetchDashboard();
-  }, []);
+  fetchDashboardData();
+}, []);
 
-  const filteredTransactions = demoTransactions.filter((transaction) =>
+        
+
+       
+
+  const filteredTransactions = transactions.filter((transaction) =>
     `${transaction.name} ${transaction.id} ${transaction.detail}`
       .toLowerCase()
       .includes(search.toLowerCase())
@@ -517,7 +548,9 @@ function App() {
                 </div>
               </section>
             </>
-                    ) : activePage === "Agents" ? (
+                   ) : activePage === "Negotiation Lab" ? (
+            <NegotiationLab />
+          ) : activePage === "Agents" ? (
             <AgentsPage />
           ) : (
             <section className="placeholder-page">

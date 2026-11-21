@@ -29,6 +29,19 @@ export default function AgentsPage() {
 
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  // MANDATE CONFIGURATION
+const [selectedMandateAgent, setSelectedMandateAgent] = useState("");
+const [mandate, setMandate] = useState({
+  max_unit_price: "",
+  min_unit_price: "",
+  max_quantity: 1,
+  max_total_amount: "",
+  allowed_items: "*",
+  requires_approval: false,
+});
+
+const [mandateLoading, setMandateLoading] = useState(false);
+const [mandateSaving, setMandateSaving] = useState(false);
 
   // LOAD OWNERS AND AGENTS
   async function loadData() {
@@ -152,11 +165,153 @@ export default function AgentsPage() {
       setUpdatingId("");
     }
   }
+  // LOAD EXISTING MANDATE
+async function loadMandate(agentId) {
+  if (!agentId) return;
 
-  // COUNTS
-  const activeCount = agents.filter(
-    (agent) => agent.status === "active"
-  ).length;
+  setSelectedMandateAgent(agentId);
+  setMandateLoading(true);
+  setError("");
+  setMessage("");
+
+  try {
+    const response = await fetch(`${API}/mandates/${agentId}`);
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        setMandate({
+          max_unit_price: "",
+          min_unit_price: "",
+          max_quantity: 1,
+          max_total_amount: "",
+          allowed_items: "*",
+          requires_approval: false,
+        });
+
+        return;
+      }
+
+      throw new Error("Unable to load agent mandate.");
+    }
+
+    const data = await response.json();
+
+    setMandate({
+      max_unit_price: data.max_unit_price ?? "",
+      min_unit_price: data.min_unit_price ?? "",
+      max_quantity: data.max_quantity ?? 1,
+      max_total_amount: data.max_total_amount ?? "",
+      allowed_items: Array.isArray(data.allowed_items)
+        ? data.allowed_items.join(", ")
+        : data.allowed_items ?? "*",
+      requires_approval: Boolean(data.requires_approval),
+    });
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setMandateLoading(false);
+  }
+}
+
+// SAVE MANDATE
+async function saveMandate(e) {
+  e.preventDefault();
+
+  if (mandateSaving) return;
+
+  setError("");
+  setMessage("");
+
+  if (!selectedMandateAgent) {
+    setError("Select an agent first.");
+    return;
+  }
+
+  const selectedAgent = agents.find(
+    (agent) => agent.id === selectedMandateAgent
+  );
+
+  const isSeller = selectedAgent?.role?.toLowerCase() === "seller";
+
+  if (
+    Number(mandate.max_quantity) <= 0 ||
+    Number(mandate.max_total_amount) <= 0
+  ) {
+    setError("Quantity and total transaction limit must be greater than zero.");
+    return;
+  }
+
+  if (isSeller && Number(mandate.min_unit_price) <= 0) {
+    setError("Seller mandates require a valid minimum unit price.");
+    return;
+  }
+
+  if (!isSeller && Number(mandate.max_unit_price) <= 0) {
+    setError("Buyer mandates require a valid maximum unit price.");
+    return;
+  }
+
+  setMandateSaving(true);
+
+  try {
+    const allowedItems =
+      mandate.allowed_items.trim() === "*"
+        ? "*"
+        : mandate.allowed_items
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean);
+
+    const response = await fetch(
+      `${API}/mandates/${selectedMandateAgent}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          max_unit_price: isSeller
+            ? null
+            : Number(mandate.max_unit_price),
+
+          min_unit_price: isSeller
+            ? Number(mandate.min_unit_price)
+            : mandate.min_unit_price === ""
+              ? null
+              : Number(mandate.min_unit_price),
+
+          max_quantity: Number(mandate.max_quantity),
+
+          max_total_amount: Number(mandate.max_total_amount),
+
+          allowed_items: allowedItems,
+
+          requires_approval: mandate.requires_approval,
+        }),
+      }
+    );
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error || "Failed to save mandate."
+      );
+    }
+
+    setMessage("Agent mandate saved successfully.");
+  }   catch (err) {
+    setError(err.message);
+  } finally {
+    setMandateSaving(false);
+  }
+}
+
+// COUNTS
+const activeCount = agents.filter(
+  (agent) => agent.status === "active"
+).length;
+
+
 
   const buyerCount = agents.filter(
     (agent) => agent.role === "buyer"
@@ -493,7 +648,177 @@ export default function AgentsPage() {
         </section>
 
       </div>
+{/* MANDATE CONFIGURATION */}
+<section className="agents-panel mandate-panel">
+  <div className="agents-panel-heading">
+    <div className="agents-heading-icon">
+      <ShieldCheck size={20} />
+    </div>
 
+    <div>
+      <h2>Agent Mandates</h2>
+      <p>Define the boundaries within which agents can transact.</p>
+    </div>
+  </div>
+
+  {agents.length === 0 ? (
+    <p>Create an agent before configuring its mandate.</p>
+  ) : (
+    <form onSubmit={saveMandate}>
+      {error && (
+  <div className="mandate-feedback mandate-error">
+    {error}
+  </div>
+)}
+
+{message && (
+  <div className="mandate-feedback mandate-success">
+    {message}
+  </div>
+)}
+      <label>Select agent</label>
+
+      <select
+        value={selectedMandateAgent}
+        onChange={(e) => loadMandate(e.target.value)}
+        required
+      >
+        <option value="">Select an agent</option>
+
+        {agents.map((agent) => (
+          <option key={agent.id} value={agent.id}>
+            {agent.name} ({agent.role})
+          </option>
+        ))}
+      </select>
+
+      {mandateLoading ? (
+        <div className="agents-loading">
+          <LoaderCircle size={20} />
+          Loading mandate...
+        </div>
+      ) : (
+        <>
+          <label>Maximum unit price (KES)</label>
+
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="e.g. 8000"
+            value={mandate.max_unit_price}
+            onChange={(e) =>
+              setMandate({
+                ...mandate,
+                max_unit_price: e.target.value,
+              })
+            }
+          />
+
+          <label>Minimum unit price (KES)</label>
+
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="Optional — useful for sellers"
+            value={mandate.min_unit_price}
+            onChange={(e) =>
+              setMandate({
+                ...mandate,
+                min_unit_price: e.target.value,
+              })
+            }
+          />
+
+          <label>Maximum quantity</label>
+
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={mandate.max_quantity}
+            onChange={(e) =>
+              setMandate({
+                ...mandate,
+                max_quantity: e.target.value,
+              })
+            }
+            required
+          />
+
+          <label>Maximum total transaction value (KES)</label>
+
+          <input
+            type="number"
+            min="1"
+            step="0.01"
+            placeholder="e.g. 160000"
+            value={mandate.max_total_amount}
+            onChange={(e) =>
+              setMandate({
+                ...mandate,
+                max_total_amount: e.target.value,
+              })
+            }
+            required
+          />
+
+          <label>Allowed products</label>
+
+          <input
+            type="text"
+            placeholder="Cement, Steel, Timber or *"
+            value={mandate.allowed_items}
+            onChange={(e) =>
+              setMandate({
+                ...mandate,
+                allowed_items: e.target.value,
+              })
+            }
+          />
+
+          <span className="agent-owner">
+            Separate product names with commas. Use * to allow any product.
+          </span>
+
+          <label className="mandate-approval-option">
+            <input
+              type="checkbox"
+              checked={mandate.requires_approval}
+              onChange={(e) =>
+                setMandate({
+                  ...mandate,
+                  requires_approval: e.target.checked,
+                })
+              }
+            />
+
+            Require human approval before transactions
+          </label>
+
+          <button
+            type="submit"
+            className="create-agent-button"
+            disabled={mandateSaving || !selectedMandateAgent}
+          >
+            {mandateSaving ? (
+              <>
+                <LoaderCircle size={17} />
+                Saving mandate...
+              </>
+            ) : (
+              <>
+                <ShieldCheck size={17} />
+                Save mandate
+              </>
+            )}
+          </button>
+        </>
+      )}
+    </form>
+  )}
+</section>
       {/* FOOTER NOTICE */}
       <div className="agents-security-note">
         <ShieldCheck size={19} />
