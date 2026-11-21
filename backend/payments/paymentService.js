@@ -200,6 +200,7 @@ async function handleCallback(payload) {
   let next = null;
   if (status === "SUCCESS" || status === "SUCCESSFUL" || Number(parsed.resultCode) === 0) {
     const confirmed = await provider.getStatus(payment.provider_reference);
+    addEvent(payment.id, "status_checked", confirmed);
     const confirmedStatus = String(confirmed.status || confirmed.Status || "").toUpperCase();
     if (confirmedStatus !== "SUCCESS") {
       if (payment.status === "initiated") transition(payment, "processing");
@@ -258,6 +259,7 @@ async function reconcile() {
 
     try {
       const status = await provider.getStatus(payment.provider_reference);
+      addEvent(payment.id, "status_checked", status);
       const value = String(status.status || status.Status || "").toUpperCase();
       if (value === "SUCCESS") {
         // A status lookup is the authoritative confirmation.
@@ -280,7 +282,6 @@ async function reconcile() {
           transition(getPayment(payment.id), "processing");
           syncTracking(getPayment(payment.id));
         }
-        addEvent(payment.id, "status_checked", status);
       }
     } catch (error) {
       addEvent(payment.id, "status_check_error", { code: error.code || "STATUS_ERROR" });
