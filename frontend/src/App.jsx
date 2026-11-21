@@ -30,10 +30,13 @@ async function request(path, options = {}) {
   if (!response.ok) {
     const code = data.error?.code || data.code;
     const isPaymentRequest = path.startsWith("/payments");
+    const providerMessage = typeof data.error?.message === "string" ? data.error.message : (typeof data.message === "string" ? data.message : "");
     const message = (isPaymentRequest && PAYMENT_ERROR_COPY[code]) ||
-      (isPaymentRequest
-        ? "We couldn't complete the payment. Please try again or contact support."
-        : (typeof data.error === "string" ? data.error : data.error?.message || data.message || "Request failed (" + response.status + ")"));
+      (isPaymentRequest && code && code.startsWith("PAYHERO_") && providerMessage
+        ? providerMessage
+        : (isPaymentRequest
+          ? "We couldn't complete the payment. Please try again or contact support."
+          : (typeof data.error === "string" ? data.error : providerMessage || "Request failed (" + response.status + ")")));
     const error = new Error(message);
     error.code = code || "REQUEST_FAILED";
     throw error;
