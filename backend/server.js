@@ -377,6 +377,14 @@ app.get("/api/audit", (req, res) => {
 // ------------------------------------
 // START SERVER
 // ------------------------------------
+// Reconcile PayHero payments whose callbacks may have been delayed or lost.
+const paymentService = require("./payments/paymentService");
+setInterval(() => {
+  paymentService.reconcile().catch((error) => {
+    console.error("Payment reconciliation failed:", error.code || "RECONCILE_ERROR");
+  });
+}, 60 * 1000).unref();
+
 app.listen(PORT, () => {
   console.log(`BATN backend running on http://localhost:${PORT}`);
 });
