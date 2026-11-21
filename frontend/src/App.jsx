@@ -81,6 +81,7 @@ export default function App() {
   const [mandates, setMandates] = useState([]);
   const [negotiations, setNegotiations] = useState([]);
   const [reviews, setReviews] = useState([]);
+  const [approvals, setApprovals] = useState([]);
   const [payments, setPayments] = useState([]);
   const [audit, setAudit] = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -110,6 +111,8 @@ export default function App() {
         const result = await request("/negotiations"); setNegotiations(result.negotiations || []);
       } else if (page === "Risk review") {
         const result = await request("/risk/review-queue"); setReviews(result.reviews || []);
+      } else if (page === "Owner approvals") {
+        const result = await request("/risk/approval-queue"); setApprovals(result.approvals || []);
       } else if (page === "Payments") {
         const results = await Promise.all([request("/payments"), request("/negotiations")]); setPayments(results[0].payments || []); setNegotiations(results[1].negotiations || []);
       } else if (page === "Activity") {
@@ -174,6 +177,15 @@ export default function App() {
       setMessage(result.message); load();
     } catch (e) { setError(e.message); }
   }
+  async function decideOwnerApproval(item, action) {
+    try {
+      const ownerEmail = window.prompt("Enter the registered email address of the buyer or seller owner:");
+      if (!ownerEmail) return;
+      const notes = window.prompt("Optional approval/rejection note:") || "";
+      const result = await request("/risk/" + item.negotiation_id + "/owner-approval", { method: "POST", body: JSON.stringify({ action, owner_email: ownerEmail, notes }) });
+      setMessage(result.message); load();
+    } catch (e) { setError(e.message); }
+  }
   async function advancePayment(payment) {
     const next = { pending: "initiated", initiated: "processing", processing: "paid" }[payment.status];
     if (!next) return;
@@ -183,7 +195,7 @@ export default function App() {
     } catch (e) { setError(e.message); }
   }
 
-  const nav = ["Dashboard", "Agents", "Negotiations", "Risk review", "Payments", "Activity"];
+  const nav = ["Dashboard", "Agents", "Negotiations", "Risk review", "Owner approvals", "Payments", "Activity"];
   const activeDeals = negotiations.filter(n => !["rejected", "blocked", "completed"].includes(n.status)).length;
   const content = page === "Dashboard" ? <section>
     <div className="page-head"><div><span className="eyebrow">BILATERAL AGENT TRANSACTION NETWORK</span><h1>Your network at a glance.</h1><p>Live operational data from the BATN backend.</p></div><Button onClick={() => setNewDeal(true)}>＋ Start a negotiation</Button></div>
@@ -203,7 +215,7 @@ export default function App() {
 
   return <div className="shell">
     <aside className="sidebar"><div className="brand"><span className="brand-mark">J</span><span>JADILI<small>BATN WORKSPACE</small></span></div>
-      <div className="nav-label">WORKSPACE</div>{nav.map(item => <button key={item} className={"nav-item " + (page === item ? "active" : "")} onClick={() => setPage(item)}><span>{({Dashboard:"◫",Agents:"◎",Negotiations:"⇄","Risk review":"⬡",Payments:"▣",Activity:"◷"})[item]}</span>{item}{item === "Risk review" && reviews.length > 0 ? <b>{reviews.length}</b> : null}</button>)}
+      <div className="nav-label">WORKSPACE</div>{nav.map(item => <button key={item} className={"nav-item " + (page === item ? "active" : "")} onClick={() => setPage(item)}><span>{({Dashboard:"◫",Agents:"◎",Negotiations:"⇄","Risk review":"⬡",Payments:"▣",Activity:"◷"})[item]}</span>{item}{item === "Risk review" && reviews.length > 0 ? <b>{reviews.length}</b> : item === "Owner approvals" && approvals.length > 0 ? <b>{approvals.length}</b> : null}</button>)}
       <div className="sidebar-bottom"><div className="security-card"><strong>Mandate protection</strong><small>Trading rules are validated by the backend before negotiation.</small></div><small className="branch-label">FEATURE BRANCH PREVIEW</small></div>
     </aside>
     <main className="main">
@@ -213,6 +225,7 @@ export default function App() {
         {page === "Agents" && <section><div className="page-head"><div><span className="eyebrow">LIVE BATN DATA</span><h1>Agent management</h1><p>Create agents, configure mandates and control their status.</p></div><Button onClick={createAgent}>＋ Add agent</Button></div>{error && <Notice tone="error">{error}</Notice>}{message && <Notice tone="success">{message}</Notice>}{loading ? <Empty>Loading agents…</Empty> : agents.length ? <div className="cards">{agents.map(agent => { const mandate = mandates.find(m => m.agent_id === agent.id); return <article className="agent-card" key={agent.id}><div className="card-top"><span className="avatar">{agent.name.split(/\s+/).map(x => x[0]).slice(0,2).join("").toUpperCase()}</span><span className={"status " + agent.status}>{agent.status}</span></div><h2>{agent.name}</h2><p>{agent.role} · {agent.owner_name || owners.find(o => o.id === agent.owner_id)?.name || "Owner"}</p><div className="card-meta"><span>Mandate</span><strong>{mandate ? "Configured" : "Not set"}</strong></div>{mandate && <small>Max quantity {mandate.max_quantity} · Total limit {money(mandate.max_total_amount)}</small>}<div className="actions"><Button kind="secondary" onClick={() => setMandate(agent)}>Set mandate</Button><Button kind="ghost" onClick={() => toggleAgent(agent)}>{agent.status === "active" ? "Deactivate" : "Activate"}</Button></div></article> })}</div> : <Empty>No agents yet. Add an owner and create the first buyer or seller agent.</Empty>}</section>}
         {page === "Negotiations" && <section><div className="page-head"><div><span className="eyebrow">LIVE BATN DATA</span><h1>Negotiations</h1><p>Records returned by the BATN negotiation engine.</p></div><Button onClick={() => setNewDeal(true)}>＋ New negotiation</Button></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel table-wrap"><table><thead><tr><th>Item</th><th>Buyer</th><th>Seller</th><th>Qty</th><th>Final unit price</th><th>Status</th></tr></thead><tbody>{negotiations.map(n => <tr key={n.id}><td><strong>{n.item_description}</strong><small>{n.created_at || n.id}</small></td><td>{n.buyer_name}</td><td>{n.seller_name}</td><td>{n.quantity}</td><td>{n.final_price ? money(n.final_price) : "—"}</td><td><span className="status">{nice(n.status)}</span></td></tr>)}</tbody></table>{!negotiations.length && <Empty>No negotiations recorded.</Empty>}</div></section>}
         {page === "Risk review" && <section><div className="page-head"><div><span className="eyebrow">RISK ENGINE</span><h1>Human review queue</h1><p>Only unreviewed risk assessments with decision “review” appear here.</p></div></div>{error && <Notice tone="error">{error}</Notice>}{reviews.length ? reviews.map(item => <article className="panel review-card" key={item.negotiation_id}><div><span className="eyebrow">RISK SCORE {item.risk_score} · {item.risk_level}</span><h2>{item.item_description} · {item.quantity} units</h2><p>{item.buyer_name} ↔ {item.seller_name}</p><small>{(item.flags || []).join(" · ")}</small></div><div className="actions"><Button onClick={() => review(item, "approve")}>Approve review</Button><Button kind="secondary" onClick={() => review(item, "reject")}>Reject</Button></div></article>) : <Empty>No risk reviews waiting.</Empty>}<Notice>Mandate-based “pending approval” negotiations are not currently exposed through a dedicated approval endpoint. This screen handles the backend’s risk-review queue only.</Notice></section>}
+        {page === "Owner approvals" && <section><div className="page-head"><div><span className="eyebrow">MANDATE CONTROL</span><h1>Owner approvals</h1><p>Review proposed agreements requiring an agent owner's decision.</p></div><Button kind="secondary" onClick={load}>↻ Refresh</Button></div>{error && <Notice tone="error">{error}</Notice>}{message && <Notice tone="success">{message}</Notice>}{approvals.length ? approvals.map(item => <article className="panel review-card" key={item.negotiation_id}><div><span className="eyebrow">PENDING OWNER APPROVAL</span><h2>{item.item_description} · {item.quantity} units</h2><p>{item.buyer_name} ↔ {item.seller_name}</p><p>Proposed unit price: {money(Math.max(Number(item.initial_offer), Number(item.seller_min_price || 0)))}</p><small>Buyer owner: {item.buyer_owner_name} · Seller owner: {item.seller_owner_name}</small></div><div className="actions"><Button onClick={() => decideOwnerApproval(item, "approve")}>Approve</Button><Button kind="secondary" onClick={() => decideOwnerApproval(item, "reject")}>Reject</Button></div></article>) : <Empty>No negotiations are awaiting owner approval.</Empty>}<Notice>For this demo, the registered email of either agent owner is checked against the negotiation before a decision is recorded. This is not a substitute for authenticated owner sign-in in production.</Notice></section>}
         {page === "Payments" && <section><div className="page-head"><div><span className="eyebrow">PAYMENT INTENTS</span><h1>Payments</h1><p>Pay approved deals and follow M-Pesa status.</p></div></div>{error && <Notice tone="error">{error}</Notice>}{message && <Notice tone="success">{message}</Notice>}<PaymentQueue negotiations={negotiations} onPay={setPayDeal} title="Initiate a payment" description="Choose an accepted deal to send its M-Pesa STK push." /><div className="panel table-wrap"><h2>Payment history</h2><table><thead><tr><th>Item</th><th>Parties</th><th>Amount</th><th>Provider</th><th>Phone</th><th>Receipt</th><th>Status</th><th>Action</th></tr></thead><tbody>{payments.map(p => <tr key={p.id}><td><strong>{p.item_description}</strong><small>{p.quantity} units</small></td><td>{p.buyer_name} → {p.seller_name}</td><td>{money(p.amount)}</td><td>{p.provider}</td><td>{p.phone || "—"}</td><td>{p.mpesa_receipt || "—"}</td><td><span className="status">{p.status}</span></td><td>{p.provider === "mock" && ({pending:"initiated",initiated:"processing",processing:"paid"})[p.status] ? <Button kind="secondary" onClick={() => advancePayment(p)}>Advance demo</Button> : "—"}</td></tr>)}</tbody></table>{!payments.length && <Empty>No payment intents yet.</Empty>}</div><Notice>Only accepted deals that have cleared risk checks and any required approvals can be paid. Enter the M-Pesa number in the payment window and confirm the prompt on the phone.</Notice></section>}
         {page === "Activity" && <section><div className="page-head"><div><span className="eyebrow">AUDIT & TRACKING</span><h1>Activity history</h1><p>Backend audit logs and transaction tracking records.</p></div></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel"><h2>Audit log</h2>{audit.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{auditDescription(x)}</strong><small>{x.actor} · {x.entity_type} · {x.entity_id} · {x.created_at}</small></div></div>)}{!audit.length && <Empty>No audit records.</Empty>}</div><div className="panel"><h2>Transaction tracking</h2>{transactions.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{x.item_description} · {x.quantity} units</strong><small>{x.buyer_name} → {x.seller_name} · {nice(x.transaction_status)} · {x.created_at}</small></div></div>)}{!transactions.length && <Empty>No tracked transactions yet.</Empty>}</div></section>}
       </div>
