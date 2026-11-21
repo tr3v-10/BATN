@@ -1,561 +1,189 @@
-import AgentsPage from "./AgentsPage";
-import TransactionsPage from "./TransactionsPage";
-import { useEffect, useState } from "react";
-import {
-  LayoutDashboard,
-  ArrowLeftRight,
-  Bot,
-  ShieldCheck,
-  Activity,
-  Settings,
-  Bell,
-  Search,
-  ArrowUpRight,
-  ArrowDownLeft,
-  Clock3,
-  CheckCircle2,
-  AlertTriangle,
-  CircleDollarSign,
-  Menu,
-  X,
-  ChevronRight,
-  Zap,
-  ShieldAlert,
-  RefreshCw
-} from "lucide-react";
-
+import React, { useEffect, useState } from "react";
 import "./App.css";
 
-const navigation = [
-  { label: "Overview", icon: LayoutDashboard },
-  { label: "Transactions", icon: ArrowLeftRight },
-  { label: "Agents", icon: Bot },
-  { label: "Security", icon: ShieldCheck },
-  { label: "Activity", icon: Activity },
-];
+const API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:5000").replace(/\/$/, "");
+async function request(path, options = {}) {
+  const response = await fetch(API + "/api" + path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || data.message || "Request failed (" + response.status + ")");
+  return data;
+}
+const money = value => "KES " + Number(value || 0).toLocaleString("en-KE");
+const nice = value => String(value || "unknown").replaceAll("_", " ");
 
-const demoTransactions = [
-  {
-    id: "BATN-1024",
-    name: "Nairobi Digital Supplies",
-    detail: "Office equipment",
-    amount: "KES 12,500",
-    status: "Completed",
-    date: "Today, 09:42",
-    icon: ArrowUpRight,
-  },
-  {
-    id: "BATN-1023",
-    name: "Green Basket Market",
-    detail: "Weekly groceries",
-    amount: "KES 4,200",
-    status: "Pending",
-    date: "Today, 09:18",
-    icon: ArrowUpRight,
-  },
-  {
-    id: "BATN-1022",
-    name: "TechHub Solutions",
-    detail: "Laptop accessories",
-    amount: "KES 18,000",
-    status: "Review",
-    date: "Today, 08:56",
-    icon: ArrowUpRight,
-  },
-  {
-    id: "BATN-1021",
-    name: "Water Services",
-    detail: "Utility payment",
-    amount: "KES 2,800",
-    status: "Completed",
-    date: "Yesterday",
-    icon: ArrowUpRight,
-  },
-];
+function Notice({ children, tone = "info" }) {
+  return <div className={"notice " + tone}>{children}</div>;
+}
+function Button({ children, onClick, kind = "primary", type = "button", disabled = false }) {
+  return <button type={type} disabled={disabled} className={"btn " + kind} onClick={onClick}>{children}</button>;
+}
+function Empty({ children }) { return <div className="empty">{children}</div>; }
 
-function App() {
-  const [activePage, setActivePage] = useState("Overview");
+export default function App() {
+  const [page, setPage] = useState("Dashboard");
   const [dashboard, setDashboard] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [apiError, setApiError] = useState(false);
-  const [mobileMenu, setMobileMenu] = useState(false);
-  const [search, setSearch] = useState("");
+  const [agents, setAgents] = useState([]);
+  const [owners, setOwners] = useState([]);
+  const [mandates, setMandates] = useState([]);
+  const [negotiations, setNegotiations] = useState([]);
+  const [reviews, setReviews] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [audit, setAudit] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [newDeal, setNewDeal] = useState(false);
+  const [status, setStatus] = useState("Checking backend");
 
-  useEffect(() => {
-    async function fetchDashboard() {
-      try {
-        const response = await fetch(
-          "http://localhost:5000/api/dashboard"
-        );
-
-        if (!response.ok) {
-          throw new Error("Dashboard request failed");
-        }
-
-        const data = await response.json();
-
-        setDashboard(data);
-        setApiError(false);
-      } catch (error) {
-        setApiError(true);
-      } finally {
-        setLoading(false);
+  async function load() {
+    setLoading(true); setError("");
+    try {
+      const health = await request("/status");
+      setStatus(health.status || "online");
+      const agentData = await request("/agents");
+      setAgents(Array.isArray(agentData) ? agentData : agentData.agents || []);
+      if (page === "Dashboard") {
+        const results = await Promise.all([request("/dashboard"), request("/negotiations"), request("/audit")]);
+        setDashboard(results[0]); setNegotiations(results[1].negotiations || []); setAudit(Array.isArray(results[2]) ? results[2] : results[2].logs || []);
+      } else if (page === "Agents") {
+        const results = await Promise.all([request("/agents"), request("/users"), request("/mandates")]);
+        setAgents(Array.isArray(results[0]) ? results[0] : results[0].agents || []);
+        setOwners(Array.isArray(results[1]) ? results[1] : results[1].users || []);
+        setMandates(results[2].mandates || []);
+      } else if (page === "Negotiations") {
+        const result = await request("/negotiations"); setNegotiations(result.negotiations || []);
+      } else if (page === "Risk review") {
+        const result = await request("/risk/review-queue"); setReviews(result.reviews || []);
+      } else if (page === "Payments") {
+        const result = await request("/payments"); setPayments(result.payments || []);
+      } else if (page === "Activity") {
+        const results = await Promise.all([request("/audit"), request("/transactions")]);
+        setAudit(Array.isArray(results[0]) ? results[0] : results[0].logs || []);
+        setTransactions(results[1].transactions || []);
       }
-    }
+    } catch (e) {
+      setStatus("offline"); setError(e.message);
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, [page]);
 
-    fetchDashboard();
-  }, []);
+  async function createAgent() {
+    try {
+      let ownerList = owners;
+      if (!ownerList.length) {
+        const name = window.prompt("No owners exist. Enter the owner's name:");
+        if (!name) return;
+        const email = window.prompt("Owner email (optional):") || "";
+        const created = await request("/users", { method: "POST", body: JSON.stringify({ name, email: email || null }) });
+        ownerList = [created.user]; setOwners(ownerList);
+      }
+      const name = window.prompt("Agent name:");
+      if (!name) return;
+      const role = window.prompt("Agent role: enter buyer or seller", "buyer");
+      if (!["buyer", "seller"].includes((role || "").toLowerCase())) throw new Error("Role must be buyer or seller.");
+      await request("/agents", { method: "POST", body: JSON.stringify({ owner_id: ownerList[0].id, name, role: role.toLowerCase() }) });
+      setMessage("Agent created. Configure its mandate before activating negotiations."); load();
+    } catch (e) { setError(e.message); }
+  }
+  async function toggleAgent(agent) {
+    try {
+      await request("/agents/" + agent.id + "/status", { method: "PATCH", body: JSON.stringify({ status: agent.status === "active" ? "inactive" : "active" }) });
+      setMessage(agent.name + " status updated."); load();
+    } catch (e) { setError(e.message); }
+  }
+  async function setMandate(agent) {
+    try {
+      const items = window.prompt("Allowed items, comma-separated, or * for all:", "*");
+      if (items === null) return;
+      const maxQuantity = Number(window.prompt("Maximum quantity per deal:", "50"));
+      const maxTotal = Number(window.prompt("Maximum total amount (KES):", "100000"));
+      const unitPrice = Number(window.prompt(agent.role === "buyer" ? "Maximum unit price (KES):" : "Minimum unit price (KES):", "1000"));
+      if (!Number.isInteger(maxQuantity) || maxQuantity < 1 || maxTotal <= 0 || unitPrice <= 0) throw new Error("Enter valid positive mandate limits.");
+      await request("/mandates/" + agent.id, { method: "PUT", body: JSON.stringify({
+        max_unit_price: agent.role === "buyer" ? unitPrice : null,
+        min_unit_price: agent.role === "seller" ? unitPrice : null,
+        max_quantity: maxQuantity, max_total_amount: maxTotal,
+        allowed_items: items.trim() === "*" ? "*" : items.split(",").map(x => x.trim()).filter(Boolean),
+        requires_approval: window.confirm("Require owner approval for every negotiation?")
+      }) });
+      setMessage("Mandate saved for " + agent.name + "."); load();
+    } catch (e) { setError(e.message); }
+  }
+  async function review(item, action) {
+    try {
+      const reviewer = window.prompt("Your name for the audit record:");
+      if (!reviewer) return;
+      const notes = window.prompt("Optional review note:") || "";
+      const result = await request("/risk/" + item.negotiation_id + "/review", { method: "POST", body: JSON.stringify({ action, reviewer, notes }) });
+      setMessage(result.message); load();
+    } catch (e) { setError(e.message); }
+  }
+  async function advancePayment(payment) {
+    const next = { pending: "initiated", initiated: "processing", processing: "paid" }[payment.status];
+    if (!next) return;
+    try {
+      await request("/payments/" + payment.id + "/status", { method: "PATCH", body: JSON.stringify({ status: next }) });
+      setMessage("Mock payment advanced to " + next + "."); load();
+    } catch (e) { setError(e.message); }
+  }
 
-  const filteredTransactions = demoTransactions.filter((transaction) =>
-    `${transaction.name} ${transaction.id} ${transaction.detail}`
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
-
-  const stats = [
-    {
-      label: "Total transactions",
-      value: dashboard?.totalTransactions ?? "--",
-      note: "All recorded transactions",
-      icon: ArrowLeftRight,
-      color: "blue",
-    },
-    {
-      label: "Completed",
-      value: dashboard?.completedTransactions ?? "--",
-      note: "Successfully completed",
-      icon: CheckCircle2,
-      color: "green",
-    },
-    {
-      label: "Pending",
-      value: dashboard?.pendingTransactions ?? "--",
-      note: "Awaiting confirmation",
-      icon: Clock3,
-      color: "amber",
-    },
-    {
-      label: "Flagged",
-      value: dashboard?.flaggedTransactions ?? "--",
-      note: "Require attention",
-      icon: ShieldAlert,
-      color: "red",
-    },
-  ];
-
-  return (
-    <div className="app-shell">
-      {mobileMenu && (
-        <div
-          className="mobile-overlay"
-          onClick={() => setMobileMenu(false)}
-        />
-      )}
-
-      <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
-        <div className="brand">
-          <div className="brand-symbol">
-            <Zap size={21} />
-          </div>
-          <div>
-            <h1>BATN</h1>
-            <span>TRANSACTION NETWORK</span>
-          </div>
-          <button
-            className="mobile-close"
-            onClick={() => setMobileMenu(false)}
-          >
-            <X size={19} />
-          </button>
-        </div>
-
-        <div className="nav-caption">WORKSPACE</div>
-
-        <nav className="navigation">
-          {navigation.map((item) => {
-            const Icon = item.icon;
-
-            return (
-              <button
-                key={item.label}
-                className={`nav-item ${
-                  activePage === item.label ? "active" : ""
-                }`}
-                onClick={() => {
-                  setActivePage(item.label);
-                  setMobileMenu(false);
-                }}
-              >
-                <Icon size={19} />
-                <span>{item.label}</span>
-                {item.label === "Security" && (
-                  <span className="nav-indicator">!</span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="sidebar-bottom">
-          <div className="security-mini">
-            <ShieldCheck size={20} />
-            <div>
-              <strong>Security layer</strong>
-              <span>Policy-based control</span>
-            </div>
-          </div>
-
-          <button className="nav-item settings-item">
-            <Settings size={19} />
-            <span>Settings</span>
-          </button>
-
-          <div className="profile">
-            <div className="avatar">B</div>
-            <div className="profile-info">
-              <strong>BATN Workspace</strong>
-              <span>Administrator</span>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      <main className="main-content">
-        <header className="topbar">
-          <button
-            className="menu-button"
-            onClick={() => setMobileMenu(true)}
-          >
-            <Menu size={21} />
-          </button>
-
-          <div className="breadcrumb">
-            <span>Workspace</span>
-            <ChevronRight size={15} />
-            <strong>{activePage}</strong>
-          </div>
-
-          <div className="topbar-actions">
-            <div className="system-status">
-              <span className={`status-dot ${apiError ? "offline" : ""}`} />
-              {apiError ? "API disconnected" : "System online"}
-            </div>
-
-            <button className="icon-button notification-button">
-              <Bell size={19} />
-              <span className="notification-dot" />
-            </button>
-          </div>
-        </header>
-
-        <div className="page-content">
-          <section className="welcome-section">
-            <div>
-              <div className="eyebrow">BILATERAL AGENT NETWORK</div>
-              <h2>
-                {activePage === "Overview"
-                  ? "Overview"
-                  : activePage}
-              </h2>
-              <p>
-                Monitor agent activity, transactions and trust
-                across your network.
-              </p>
-            </div>
-
-            <div className="date-chip">
-              <Activity size={16} />
-              Live workspace
-            </div>
-          </section>
-
-          {apiError && (
-            <div className="api-warning">
-              <AlertTriangle size={18} />
-              <div>
-                <strong>Backend unavailable</strong>
-                <p>
-                  Dashboard statistics cannot be retrieved.
-                  Check that the BATN backend is running.
-                </p>
-              </div>
-              <button
-                onClick={() => window.location.reload()}
-                className="retry-button"
-              >
-                <RefreshCw size={15} />
-                Retry
-              </button>
-            </div>
-          )}
-
-          {activePage === "Overview" ? (
-            <>
-              <section className="stats-grid">
-                {stats.map((stat) => {
-                  const Icon = stat.icon;
-
-                  return (
-                    <div className="stat-card" key={stat.label}>
-                      <div className="stat-top">
-                        <span>{stat.label}</span>
-                        <div className={`stat-icon ${stat.color}`}>
-                          <Icon size={19} />
-                        </div>
-                      </div>
-
-                      <div className="stat-value">
-                        {loading ? "..." : stat.value}
-                      </div>
-
-                      <div className="stat-note">
-                        {stat.note}
-                      </div>
-                    </div>
-                  );
-                })}
-              </section>
-
-              <section className="feature-grid">
-                <div className="network-card">
-                  <div className="network-header">
-                    <div>
-                      <div className="eyebrow">
-                        NETWORK STATUS
-                      </div>
-                      <h3>Agent infrastructure</h3>
-                    </div>
-                    <span className="live-tag">
-                      <span className="status-dot" />
-                      Operational
-                    </span>
-                  </div>
-
-                  <div className="network-visual">
-                    <div className="network-node">
-                      <div className="node-icon buyer">
-                        <Bot size={24} />
-                      </div>
-                      <strong>Buyer Agent</strong>
-                      <span>Requesting</span>
-                    </div>
-
-                    <div className="connection">
-                      <div className="connection-line" />
-                      <div className="connection-label">
-                        Protocol
-                      </div>
-                    </div>
-
-                    <div className="network-node">
-                      <div className="node-icon seller">
-                        <Bot size={24} />
-                      </div>
-                      <strong>Seller Agent</strong>
-                      <span>Responding</span>
-                    </div>
-                  </div>
-
-                  <div className="network-footer">
-                    <div>
-                      <span className="footer-label">
-                        Active agents
-                      </span>
-                      <strong>
-                        {loading
-                          ? "..."
-                          : dashboard?.activeAgents ?? 0}
-                      </strong>
-                    </div>
-                    <div>
-                      <span className="footer-label">
-                        Protocol
-                      </span>
-                      <strong>BATN Core</strong>
-                    </div>
-                    <div>
-                      <span className="footer-label">
-                        Trust layer
-                      </span>
-                      <strong>Policy enforced</strong>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="security-card">
-                  <div className="security-heading">
-                    <div className="security-icon-large">
-                      <ShieldCheck size={25} />
-                    </div>
-                    <div>
-                      <div className="eyebrow">
-                        TRUST & SAFETY
-                      </div>
-                      <h3>Security control</h3>
-                    </div>
-                  </div>
-
-                  <p>
-                    Transactions will be checked against
-                    permissions, limits and risk rules before
-                    payment execution.
-                  </p>
-
-                  <div className="security-rule">
-                    <span className="rule-dot green-dot" />
-                    <span>Authorized actions</span>
-                    <strong>Proceed</strong>
-                  </div>
-
-                  <div className="security-rule">
-                    <span className="rule-dot amber-dot" />
-                    <span>Unusual actions</span>
-                    <strong>Review</strong>
-                  </div>
-
-                  <div className="security-rule">
-                    <span className="rule-dot red-dot" />
-                    <span>Prohibited actions</span>
-                    <strong>Block</strong>
-                  </div>
-
-                  <div className="security-disclaimer">
-                    <ShieldCheck size={15} />
-                    <span>
-                      Illustrative rules. Enforcement will be
-                      implemented in later modules.
-                    </span>
-                  </div>
-                </div>
-              </section>
-
-              <section className="transactions-card">
-                <div className="section-header">
-                  <div>
-                    <div className="eyebrow">
-                      TRANSACTION ACTIVITY
-                    </div>
-                    <h3>Recent transactions</h3>
-                  </div>
-
-                  <button
-                    className="view-button"
-                    onClick={() => setActivePage("Transactions")}
-                  >
-                    View all
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-
-                <div className="table-toolbar">
-                  <div className="search-box">
-                    <Search size={17} />
-                    <input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search transactions..."
-                    />
-                  </div>
-                </div>
-
-                <div className="transaction-table-wrapper">
-                  <table className="transaction-table">
-                    <thead>
-                      <tr>
-                        <th>TRANSACTION</th>
-                        <th>REFERENCE</th>
-                        <th>AMOUNT</th>
-                        <th>STATUS</th>
-                        <th>DATE</th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {filteredTransactions.map((transaction) => (
-                        <tr key={transaction.id}>
-                          <td>
-                            <div className="transaction-name">
-                              <div className="transaction-icon">
-                                <transaction.icon size={17} />
-                              </div>
-                              <div>
-                                <strong>{transaction.name}</strong>
-                                <span>{transaction.detail}</span>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="reference">
-                            {transaction.id}
-                          </td>
-                          <td className="amount">
-                            {transaction.amount}
-                          </td>
-                          <td>
-                            <span
-                              className={`status-badge ${
-                                transaction.status.toLowerCase()
-                              }`}
-                            >
-                              {transaction.status}
-                            </span>
-                          </td>
-                          <td className="date-cell">
-                            {transaction.date}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="demo-note">
-                  <Activity size={15} />
-                  <span>
-                    Sample transactions shown for interface
-                    demonstration. No payments have been made.
-                  </span>
-                </div>
-              </section>
-            </>
-                    ) : activePage === "Agents" ? (
-            <AgentsPage />
-          ) : (
-            <section className="placeholder-page">
-              <div className="placeholder-icon">
-                {activePage === "Transactions" && (
-                  <ArrowLeftRight size={30} />
-                )}
-                {activePage === "Agents" && <Bot size={30} />}
-                {activePage === "Security" && (
-                  <ShieldCheck size={30} />
-                )}
-                {activePage === "Activity" && (
-                  <Activity size={30} />
-                )}
-              </div>
-
-              <h3>{activePage}</h3>
-              <p>
-                This workspace will be developed in a later
-                BATN module.
-              </p>
-              <button
-                className="back-button"
-                onClick={() => setActivePage("Overview")}
-              >
-                Return to overview
-              </button>
-            </section>
-          )}
-
-          <footer className="footer">
-            <span>BATN · Bilateral Agent Transaction Network</span>
-            <span>Prototype · Development environment</span>
-          </footer>
-        </div>
-      </main>
+  const nav = ["Dashboard", "Agents", "Negotiations", "Risk review", "Payments", "Activity"];
+  const activeDeals = negotiations.filter(n => !["rejected", "blocked", "completed"].includes(n.status)).length;
+  const content = page === "Dashboard" ? <section>
+    <div className="page-head"><div><span className="eyebrow">BILATERAL AGENT TRANSACTION NETWORK</span><h1>Your network at a glance.</h1><p>Live operational data from the BATN backend.</p></div><Button onClick={() => setNewDeal(true)}>＋ Start a negotiation</Button></div>
+    {error && <Notice tone="error">Live data unavailable: {error}</Notice>}
+    <div className="stats">
+      <article><span>Total transactions</span><strong>{dashboard?.totalTransactions ?? "—"}</strong><small>Recorded transactions</small></article>
+      <article><span>Active negotiations</span><strong>{activeDeals}</strong><small>From negotiation engine</small></article>
+      <article><span>Completed transactions</span><strong>{dashboard?.completedTransactions ?? "—"}</strong><small>Successfully completed</small></article>
+      <article><span>Flagged transactions</span><strong>{dashboard?.flaggedTransactions ?? "—"}</strong><small>Require attention</small></article>
     </div>
-  );
+    <div className="panel"><div className="panel-title"><h2>Recent audit activity</h2><button className="link" onClick={() => setPage("Activity")}>View activity →</button></div>
+      {audit.length ? audit.slice(0, 5).map((x, i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{nice(x.action)}</strong><small>{x.actor || "System"} · {x.entity_type || "event"} · {x.created_at || ""}</small></div></div>) : <Empty>No audit activity recorded yet.</Empty>}
+    </div>
+    <Notice>Authentication, user sessions and role-based access are not implemented in the current backend. This workspace is an integration preview, not a secure production login.</Notice>
+  </section> : null;
+
+  return <div className="shell">
+    <aside className="sidebar"><div className="brand"><span className="brand-mark">J</span><span>JADILI<small>BATN WORKSPACE</small></span></div>
+      <div className="nav-label">WORKSPACE</div>{nav.map(item => <button key={item} className={"nav-item " + (page === item ? "active" : "")} onClick={() => setPage(item)}><span>{({Dashboard:"◫",Agents:"◎",Negotiations:"⇄","Risk review":"⬡",Payments:"▣",Activity:"◷"})[item]}</span>{item}{item === "Risk review" && reviews.length > 0 ? <b>{reviews.length}</b> : null}</button>)}
+      <div className="sidebar-bottom"><div className="security-card"><strong>Mandate protection</strong><small>Trading rules are validated by the backend before negotiation.</small></div><small className="branch-label">FEATURE BRANCH PREVIEW</small></div>
+    </aside>
+    <main className="main">
+      <header className="topbar"><div><span className={"health-dot " + (status === "online" ? "online" : "offline")}></span> Backend {status}</div><div className="top-right"><span className="demo-pill">AUTH: NOT CONNECTED</span><button onClick={load}>↻ Refresh</button></div></header>
+      <div className="content">
+        {page === "Dashboard" && content}
+        {page === "Agents" && <section><div className="page-head"><div><span className="eyebrow">LIVE BATN DATA</span><h1>Agent management</h1><p>Create agents, configure mandates and control their status.</p></div><Button onClick={createAgent}>＋ Add agent</Button></div>{error && <Notice tone="error">{error}</Notice>}{message && <Notice tone="success">{message}</Notice>}{loading ? <Empty>Loading agents…</Empty> : agents.length ? <div className="cards">{agents.map(agent => { const mandate = mandates.find(m => m.agent_id === agent.id); return <article className="agent-card" key={agent.id}><div className="card-top"><span className="avatar">{agent.name.split(/\s+/).map(x => x[0]).slice(0,2).join("").toUpperCase()}</span><span className={"status " + agent.status}>{agent.status}</span></div><h2>{agent.name}</h2><p>{agent.role} · {agent.owner_name || owners.find(o => o.id === agent.owner_id)?.name || "Owner"}</p><div className="card-meta"><span>Mandate</span><strong>{mandate ? "Configured" : "Not set"}</strong></div>{mandate && <small>Max quantity {mandate.max_quantity} · Total limit {money(mandate.max_total_amount)}</small>}<div className="actions"><Button kind="secondary" onClick={() => setMandate(agent)}>Set mandate</Button><Button kind="ghost" onClick={() => toggleAgent(agent)}>{agent.status === "active" ? "Deactivate" : "Activate"}</Button></div></article> })}</div> : <Empty>No agents yet. Add an owner and create the first buyer or seller agent.</Empty>}</section>}
+        {page === "Negotiations" && <section><div className="page-head"><div><span className="eyebrow">LIVE BATN DATA</span><h1>Negotiations</h1><p>Records returned by the BATN negotiation engine.</p></div><Button onClick={() => setNewDeal(true)}>＋ New negotiation</Button></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel table-wrap"><table><thead><tr><th>Item</th><th>Buyer</th><th>Seller</th><th>Qty</th><th>Final unit price</th><th>Status</th></tr></thead><tbody>{negotiations.map(n => <tr key={n.id}><td><strong>{n.item_description}</strong><small>{n.created_at || n.id}</small></td><td>{n.buyer_name}</td><td>{n.seller_name}</td><td>{n.quantity}</td><td>{n.final_price ? money(n.final_price) : "—"}</td><td><span className="status">{nice(n.status)}</span></td></tr>)}</tbody></table>{!negotiations.length && <Empty>No negotiations recorded.</Empty>}</div></section>}
+        {page === "Risk review" && <section><div className="page-head"><div><span className="eyebrow">RISK ENGINE</span><h1>Human review queue</h1><p>Only unreviewed risk assessments with decision “review” appear here.</p></div></div>{error && <Notice tone="error">{error}</Notice>}{reviews.length ? reviews.map(item => <article className="panel review-card" key={item.negotiation_id}><div><span className="eyebrow">RISK SCORE {item.risk_score} · {item.risk_level}</span><h2>{item.item_description} · {item.quantity} units</h2><p>{item.buyer_name} ↔ {item.seller_name}</p><small>{(item.flags || []).join(" · ")}</small></div><div className="actions"><Button onClick={() => review(item, "approve")}>Approve review</Button><Button kind="secondary" onClick={() => review(item, "reject")}>Reject</Button></div></article>) : <Empty>No risk reviews waiting.</Empty>}<Notice>Mandate-based “pending approval” negotiations are not currently exposed through a dedicated approval endpoint. This screen handles the backend’s risk-review queue only.</Notice></section>}
+        {page === "Payments" && <section><div className="page-head"><div><span className="eyebrow">PAYMENT INTENTS</span><h1>Payments</h1><p>Track mock payment intents created by BATN.</p></div></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel table-wrap"><table><thead><tr><th>Item</th><th>Parties</th><th>Amount</th><th>Provider</th><th>Status</th><th>Action</th></tr></thead><tbody>{payments.map(p => <tr key={p.id}><td><strong>{p.item_description}</strong><small>{p.quantity} units</small></td><td>{p.buyer_name} → {p.seller_name}</td><td>{money(p.amount)}</td><td>{p.provider}</td><td><span className="status">{p.status}</span></td><td>{p.provider === "mock" && ({pending:"initiated",initiated:"processing",processing:"paid"})[p.status] ? <Button kind="secondary" onClick={() => advancePayment(p)}>Advance</Button> : "—"}</td></tr>)}</tbody></table>{!payments.length && <Empty>No payment intents yet.</Empty>}</div><Notice>Payment status advancement is a simulator for provider “mock”; no live M-Pesa or bank payment is connected.</Notice></section>}
+        {page === "Activity" && <section><div className="page-head"><div><span className="eyebrow">AUDIT & TRACKING</span><h1>Activity history</h1><p>Backend audit logs and transaction tracking records.</p></div></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel"><h2>Audit log</h2>{audit.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{nice(x.action)}</strong><small>{x.actor} · {x.entity_type} · {x.entity_id} · {x.created_at}</small></div></div>)}{!audit.length && <Empty>No audit records.</Empty>}</div><div className="panel"><h2>Transaction tracking</h2>{transactions.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{x.item_description} · {x.quantity} units</strong><small>{x.buyer_name} → {x.seller_name} · {nice(x.transaction_status)} · {x.created_at}</small></div></div>)}{!transactions.length && <Empty>No tracked transactions yet.</Empty>}</div></section>}
+      </div>
+    </main>
+    {newDeal && <NewNegotiation agents={agents} onClose={() => setNewDeal(false)} onDone={() => { setNewDeal(false); setPage("Negotiations"); }} />}
+  </div>;
 }
 
-export default App;
+function NewNegotiation({ agents, onClose, onDone }) {
+  const [buyer, setBuyer] = useState(agents.find(a => a.role === "buyer" && a.status === "active")?.id || "");
+  const [seller, setSeller] = useState(agents.find(a => a.role === "seller" && a.status === "active")?.id || "");
+  const [item, setItem] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [offer, setOffer] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const active = agents.filter(a => a.status === "active");
+  async function submit(e) {
+    e.preventDefault(); setBusy(true); setError("");
+    try {
+      const result = await request("/negotiations", { method: "POST", body: JSON.stringify({ buyer_agent_id: buyer, seller_agent_id: seller, item_description: item.trim(), quantity: Number(quantity), initial_offer: Number(offer) }) });
+      window.alert("BATN response: " + result.status + "\n" + result.message + "\nNegotiation ID: " + result.negotiation_id);
+      onDone();
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  return <div className="overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}><form className="modal" onSubmit={submit}><button type="button" className="close" onClick={onClose}>×</button><span className="eyebrow">BACKEND-VALIDATED</span><h2>Start a negotiation</h2><p>Both agents must be active and have valid mandates.</p>{error && <Notice tone="error">{error}</Notice>}{!active.some(a => a.role === "buyer") || !active.some(a => a.role === "seller") ? <Notice tone="error">You need an active buyer and seller agent with saved mandates before starting.</Notice> : <><label>Buyer agent<select value={buyer} onChange={e => setBuyer(e.target.value)} required><option value="">Choose buyer</option>{active.filter(a => a.role === "buyer").map(a => <option value={a.id} key={a.id}>{a.name}</option>)}</select></label><label>Seller agent<select value={seller} onChange={e => setSeller(e.target.value)} required><option value="">Choose seller</option>{active.filter(a => a.role === "seller").map(a => <option value={a.id} key={a.id}>{a.name}</option>)}</select></label><label>Item<input value={item} onChange={e => setItem(e.target.value)} required placeholder="e.g. Cement" /></label><div className="two"><label>Quantity<input type="number" min="1" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Initial offer per unit (KES)<input type="number" min="0.01" step="0.01" value={offer} onChange={e => setOffer(e.target.value)} required /></label></div><Button type="submit" disabled={busy}>{busy ? "Submitting…" : "Submit to BATN"}</Button></>}<Button kind="ghost" onClick={onClose}>Cancel</Button></form></div>;
+}
