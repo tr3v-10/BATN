@@ -15,6 +15,38 @@ import "./AgentsPage.css";
 
 const API = "http://localhost:5000/api";
 
+function formatAllowedItems(value) {
+  if (value === undefined || value === null || value === "") return "*";
+  if (value === "*") return "*";
+
+  let parsed = value;
+  for (let attempt = 0; attempt < 3 && typeof parsed === "string"; attempt++) {
+    const trimmed = parsed.trim();
+    if (!trimmed) return "*";
+    if (trimmed === "*") return "*";
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      break;
+    }
+  }
+
+  const items = (Array.isArray(parsed) ? parsed : String(parsed).split(","))
+    .flat(Infinity)
+    .filter(item => typeof item === "string")
+    .map(item => item.trim().replace(/^[\\s\\[\\]"]+|[\\s\\[\\]"]+$/g, ""))
+    .filter(Boolean);
+
+  return items.length ? [...new Set(items)].join(", ") : "*";
+}
+
+function parseAllowedItemsInput(value) {
+  const normalized = formatAllowedItems(value);
+  if (normalized === "*") return "*";
+  return [...new Set(normalized.split(",").map(item => item.trim()).filter(Boolean))];
+}
+
+
 export default function AgentsPage() {
   const [agents, setAgents] = useState([]);
   const [owners, setOwners] = useState([]);
@@ -201,9 +233,7 @@ async function loadMandate(agentId) {
       min_unit_price: data.min_unit_price ?? "",
       max_quantity: data.max_quantity ?? 1,
       max_total_amount: data.max_total_amount ?? "",
-      allowed_items: Array.isArray(data.allowed_items)
-        ? data.allowed_items.join(", ")
-        : data.allowed_items ?? "*",
+      allowed_items: formatAllowedItems(data.allowed_items),
       requires_approval: Boolean(data.requires_approval),
     });
   } catch (err) {
@@ -254,13 +284,11 @@ async function saveMandate(e) {
   setMandateSaving(true);
 
   try {
-    const allowedItems =
-      mandate.allowed_items.trim() === "*"
-        ? "*"
-        : mandate.allowed_items
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean);
+    const allowedItems = parseAllowedItemsInput(mandate.allowed_items);
+    if (Array.isArray(allowedItems) && allowedItems.length === 0) {
+      setError("Enter at least one allowed product, or use *.");
+      return;
+    }
 
     const response = await fetch(
       `${API}/mandates/${selectedMandateAgent}`,
