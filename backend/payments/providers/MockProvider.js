@@ -1,4 +1,7 @@
 class MockProvider {
+  constructor() { this.statuses = new Map(); }
+  setStatus(reference, status, extra = {}) { this.statuses.set(reference, { success: true, status, reference, ...extra }); }
+
   async initiatePayment({ paymentId }) {
     return {
       success: true,
@@ -10,12 +13,7 @@ class MockProvider {
   }
 
   async getStatus(providerReference) {
-    return {
-      success: true,
-      status: "QUEUED",
-      reference: providerReference,
-      provider: "mock"
-    };
+    return this.statuses.get(providerReference) || { success: true, status: "QUEUED", reference: providerReference, provider: "mock" };
   }
 
   parseCallback(body) {
