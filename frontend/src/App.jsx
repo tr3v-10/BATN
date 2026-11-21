@@ -195,6 +195,7 @@ function PaymentFlow({ deal, onClose, onUpdated }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const finished = payment && ["paid", "failed", "cancelled"].includes(payment.status);
+  const activeStep = !payment ? 0 : payment.status === "paid" ? 3 : payment.status === "processing" ? 2 : 1;
   useEffect(() => {
     if (!payment || finished) return;
     const poll = setInterval(async () => {
@@ -225,7 +226,7 @@ function PaymentFlow({ deal, onClose, onUpdated }) {
       setPayment(result.payment); setSeconds(60);
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
-  return <div className="overlay"><div className="modal"><button className="close" onClick={onClose}>×</button><span className="eyebrow">M-PESA PAYMENT</span><h2>{payment ? "Payment status" : "Pay approved deal"}</h2><p>{deal.item_description} · {deal.quantity} units</p><h2>{money(Number(deal.final_price) * Number(deal.quantity))}</h2>{error && <Notice tone="error">{error}</Notice>}
+  return <div className="overlay"><div className="modal"><button className="close" onClick={onClose}>×</button><span className="eyebrow">M-PESA PAYMENT</span><h2>{payment ? "Payment status" : "Pay approved deal"}</h2><p>{deal.item_description} · {deal.quantity} units</p><h2>{money(Number(deal.final_price) * Number(deal.quantity))}</h2><div className="payment-steps">{["Ready", "Sent", "Processing", "Paid"].map((label, index) => <span key={label} className={index <= activeStep ? "status active" : "status"}>{label}</span>)}</div>{error && <Notice tone="error">{error}</Notice>}
     {!payment ? <><label>M-Pesa phone number<input value={phone} onChange={e => setPhone(e.target.value)} placeholder="0712345678" /></label><small>We'll send an M-Pesa prompt to this number.</small><Button onClick={start} disabled={busy || !phone.trim()}>{busy ? "Sending…" : "Send M-Pesa prompt"}</Button></> :
     <><p>{payment.status === "paid" ? "✓ Payment received. Receipt: " + (payment.mpesa_receipt || "confirmed") : payment.failure_reason === "Timed out waiting for M-Pesa" ? "We didn't get a response from M-Pesa. If money left your account, don't pay again. Check History or contact us." : payment.status === "failed" ? "Payment didn't go through. You haven't been charged. Try again." : payment.status === "cancelled" ? "You cancelled the payment." : seconds === 0 ? "Still waiting for M-Pesa. Do not submit another payment while this request is unresolved." : "Check your phone and enter your M-Pesa PIN."}</p>{!finished && <p>Waiting for M-Pesa · {seconds}s</p>}{payment.status === "failed" || payment.status === "cancelled" ? <Button onClick={retry} disabled={busy}>Retry</Button> : null}{(payment.failure_reason === "Timed out waiting for M-Pesa" || (!finished && seconds === 0)) && <Notice tone="error">Do not submit another payment until you confirm whether money left your account.</Notice>}</>}
     <Button kind="ghost" onClick={onClose}>Close</Button>
