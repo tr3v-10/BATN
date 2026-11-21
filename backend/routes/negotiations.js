@@ -1,7 +1,7 @@
 const express = require("express");
 const { randomUUID } = require("crypto");
 const db = require("../database/db");
-const { assessRisk, saveRiskAssessment } = require("../services/riskEngine");
+const { assessRisk, saveRiskAssessment } = require("../services/riskengine");
 
 const router = express.Router();
 
