@@ -28,6 +28,8 @@ import {
 
 import "./App.css";
 
+const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/+$/, "");
+
 const navigation = [
   { label: "Negotiation Lab", icon: Zap },
   { label: "Overview", icon: LayoutDashboard },
@@ -50,8 +52,8 @@ function App() {
     try {
       const [dashboardResponse, transactionsResponse] =
         await Promise.all([
-          fetch("http://localhost:5000/api/dashboard"),
-          fetch("http://localhost:5000/api/transactions"),
+          fetch(`${API_BASE}/api/dashboard`),
+          fetch(`${API_BASE}/api/transactions`),
         ]);
 
       if (!dashboardResponse.ok || !transactionsResponse.ok) {
@@ -550,6 +552,8 @@ function App() {
             </>
                    ) : activePage === "Negotiation Lab" ? (
             <NegotiationLab />
+          ) : activePage === "Transactions" ? (
+            <TransactionsPage />
           ) : activePage === "Agents" ? (
             <AgentsPage />
           ) : (

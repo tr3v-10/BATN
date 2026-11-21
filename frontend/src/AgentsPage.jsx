@@ -13,7 +13,7 @@ import {
 
 import "./AgentsPage.css";
 
-const API = "http://localhost:5000/api";
+const API = `${(import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/+$/, "")}/api`;
 
 function formatAllowedItems(value) {
   if (value === undefined || value === null || value === "") return "*";
