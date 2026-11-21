@@ -23,19 +23,19 @@ function normalizeAllowedItems(value) {
 
   const items = rawItems
     .filter(item => typeof item === "string")
-    .map(item => item.trim().replace(/^[\\s\\[\\]"]+|[\\s\\[\\]"]+$/g, "").trim())
+    .map(item => item.trim().replace(/^[\s\[\]"]+|[\s\[\]"]+$/g, "").trim())
     .filter(Boolean);
 
   if (items.includes("*")) return "*";
-  return [...new Set(items.map(item => item.replace(/\\s+/g, " ")))];
+  return [...new Set(items.map(item => item.replace(/\s+/g, " ")))];
 }
 
 function allowedItemsMatch(value, description) {
   const items = normalizeAllowedItems(value);
   if (items === "*") return true;
-  const target = String(description || "").trim().replace(/\\s+/g, " ").toLowerCase();
+  const target = String(description || "").trim().replace(/\s+/g, " ").toLowerCase();
   return target.length > 0 && items.some(item =>
-    item.replace(/\\s+/g, " ").toLowerCase() === target
+    item.replace(/\s+/g, " ").toLowerCase() === target
   );
 }
 
