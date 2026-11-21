@@ -337,7 +337,10 @@ router.post("/negotiations/:negotiationId/risk-review", requirePluginKey, (req, 
     WHERE b.agent_id = ? AND b.marketplace_id = ? AND s.marketplace_id = ?
   `).get(negotiation.seller_agent_id, negotiation.buyer_agent_id, req.marketplace.id, req.marketplace.id);
   const requiresApproval = !!(mandates && (mandates.buyer_approval || mandates.seller_approval));
-  const status = action === "reject" ? "rejected" : (requiresApproval ? "pending_approval" : "accepted");
+  const buyerStillNeedsApproval = mandates?.buyer_approval === 1 && !negotiation.buyer_approved_at;
+  const sellerStillNeedsApproval = mandates?.seller_approval === 1 && !negotiation.seller_approved_at;
+  const status = action === "reject" ? "rejected" :
+    ((buyerStillNeedsApproval || sellerStillNeedsApproval) ? "pending_approval" : "accepted");
   const finalPrice = action === "approve" ? candidatePrice : null;
   const reviewNotes = typeof notes === "string" ? notes.trim().slice(0, 2000) : null;
 
