@@ -38,6 +38,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [newDeal, setNewDeal] = useState(false);
   const [status, setStatus] = useState("Checking backend");
+  const [payDeal, setPayDeal] = useState(null);
 
   async function load() {
     setLoading(true); setError("");
@@ -59,7 +60,7 @@ export default function App() {
       } else if (page === "Risk review") {
         const result = await request("/risk/review-queue"); setReviews(result.reviews || []);
       } else if (page === "Payments") {
-        const result = await request("/payments"); setPayments(result.payments || []);
+        const results = await Promise.all([request("/payments"), request("/negotiations")]); setPayments(results[0].payments || []); setNegotiations(results[1].negotiations || []);
       } else if (page === "Activity") {
         const results = await Promise.all([request("/audit"), request("/transactions")]);
         setAudit(Array.isArray(results[0]) ? results[0] : results[0].logs || []);
@@ -160,11 +161,11 @@ export default function App() {
         {page === "Agents" && <section><div className="page-head"><div><span className="eyebrow">LIVE BATN DATA</span><h1>Agent management</h1><p>Create agents, configure mandates and control their status.</p></div><Button onClick={createAgent}>＋ Add agent</Button></div>{error && <Notice tone="error">{error}</Notice>}{message && <Notice tone="success">{message}</Notice>}{loading ? <Empty>Loading agents…</Empty> : agents.length ? <div className="cards">{agents.map(agent => { const mandate = mandates.find(m => m.agent_id === agent.id); return <article className="agent-card" key={agent.id}><div className="card-top"><span className="avatar">{agent.name.split(/\s+/).map(x => x[0]).slice(0,2).join("").toUpperCase()}</span><span className={"status " + agent.status}>{agent.status}</span></div><h2>{agent.name}</h2><p>{agent.role} · {agent.owner_name || owners.find(o => o.id === agent.owner_id)?.name || "Owner"}</p><div className="card-meta"><span>Mandate</span><strong>{mandate ? "Configured" : "Not set"}</strong></div>{mandate && <small>Max quantity {mandate.max_quantity} · Total limit {money(mandate.max_total_amount)}</small>}<div className="actions"><Button kind="secondary" onClick={() => setMandate(agent)}>Set mandate</Button><Button kind="ghost" onClick={() => toggleAgent(agent)}>{agent.status === "active" ? "Deactivate" : "Activate"}</Button></div></article> })}</div> : <Empty>No agents yet. Add an owner and create the first buyer or seller agent.</Empty>}</section>}
         {page === "Negotiations" && <section><div className="page-head"><div><span className="eyebrow">LIVE BATN DATA</span><h1>Negotiations</h1><p>Records returned by the BATN negotiation engine.</p></div><Button onClick={() => setNewDeal(true)}>＋ New negotiation</Button></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel table-wrap"><table><thead><tr><th>Item</th><th>Buyer</th><th>Seller</th><th>Qty</th><th>Final unit price</th><th>Status</th></tr></thead><tbody>{negotiations.map(n => <tr key={n.id}><td><strong>{n.item_description}</strong><small>{n.created_at || n.id}</small></td><td>{n.buyer_name}</td><td>{n.seller_name}</td><td>{n.quantity}</td><td>{n.final_price ? money(n.final_price) : "—"}</td><td><span className="status">{nice(n.status)}</span></td></tr>)}</tbody></table>{!negotiations.length && <Empty>No negotiations recorded.</Empty>}</div></section>}
         {page === "Risk review" && <section><div className="page-head"><div><span className="eyebrow">RISK ENGINE</span><h1>Human review queue</h1><p>Only unreviewed risk assessments with decision “review” appear here.</p></div></div>{error && <Notice tone="error">{error}</Notice>}{reviews.length ? reviews.map(item => <article className="panel review-card" key={item.negotiation_id}><div><span className="eyebrow">RISK SCORE {item.risk_score} · {item.risk_level}</span><h2>{item.item_description} · {item.quantity} units</h2><p>{item.buyer_name} ↔ {item.seller_name}</p><small>{(item.flags || []).join(" · ")}</small></div><div className="actions"><Button onClick={() => review(item, "approve")}>Approve review</Button><Button kind="secondary" onClick={() => review(item, "reject")}>Reject</Button></div></article>) : <Empty>No risk reviews waiting.</Empty>}<Notice>Mandate-based “pending approval” negotiations are not currently exposed through a dedicated approval endpoint. This screen handles the backend’s risk-review queue only.</Notice></section>}
-        {page === "Payments" && <section><div className="page-head"><div><span className="eyebrow">PAYMENT INTENTS</span><h1>Payments</h1><p>Track mock payment intents created by BATN.</p></div></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel table-wrap"><table><thead><tr><th>Item</th><th>Parties</th><th>Amount</th><th>Provider</th><th>Status</th><th>Action</th></tr></thead><tbody>{payments.map(p => <tr key={p.id}><td><strong>{p.item_description}</strong><small>{p.quantity} units</small></td><td>{p.buyer_name} → {p.seller_name}</td><td>{money(p.amount)}</td><td>{p.provider}</td><td><span className="status">{p.status}</span></td><td>{p.provider === "mock" && ({pending:"initiated",initiated:"processing",processing:"paid"})[p.status] ? <Button kind="secondary" onClick={() => advancePayment(p)}>Advance</Button> : "—"}</td></tr>)}</tbody></table>{!payments.length && <Empty>No payment intents yet.</Empty>}</div><Notice>Payment status advancement is a simulator for provider “mock”; no live M-Pesa or bank payment is connected.</Notice></section>}
+        {page === "Payments" && <section><div className="page-head"><div><span className="eyebrow">PAYMENT INTENTS</span><h1>Payments</h1><p>Pay approved deals and follow M-Pesa status.</p></div></div>{error && <Notice tone="error">{error}</Notice>}{message && <Notice tone="success">{message}</Notice>}<div className="panel"><h2>Approved deals ready for payment</h2>{negotiations.filter(n => n.status === "accepted").map(n => <div className="list-row" key={n.id}><span className="dot"></span><div><strong>{n.item_description} · {n.quantity} units</strong><small>{n.buyer_name} → {n.seller_name} · {money(Number(n.final_price) * Number(n.quantity))}</small></div><Button kind="secondary" onClick={() => setPayDeal(n)}>Pay now</Button></div>)}{!negotiations.some(n => n.status === "accepted") && <Empty>No approved deals are currently awaiting payment.</Empty>}</div><div className="panel table-wrap"><h2>Payment history</h2><table><thead><tr><th>Item</th><th>Parties</th><th>Amount</th><th>Provider</th><th>Phone</th><th>Receipt</th><th>Status</th><th>Action</th></tr></thead><tbody>{payments.map(p => <tr key={p.id}><td><strong>{p.item_description}</strong><small>{p.quantity} units</small></td><td>{p.buyer_name} → {p.seller_name}</td><td>{money(p.amount)}</td><td>{p.provider}</td><td>{p.phone || "—"}</td><td>{p.mpesa_receipt || "—"}</td><td><span className="status">{p.status}</span></td><td>{p.provider === "mock" && ({pending:"initiated",initiated:"processing",processing:"paid"})[p.status] ? <Button kind="secondary" onClick={() => advancePayment(p)}>Advance demo</Button> : "—"}</td></tr>)}</tbody></table>{!payments.length && <Empty>No payment intents yet.</Empty>}</div><Notice>Mock mode is for offline demonstrations. Select PAYMENT_PROVIDER=payhero only after configuring PayHero credentials and a public HTTPS callback URL.</Notice></section>}
         {page === "Activity" && <section><div className="page-head"><div><span className="eyebrow">AUDIT & TRACKING</span><h1>Activity history</h1><p>Backend audit logs and transaction tracking records.</p></div></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel"><h2>Audit log</h2>{audit.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{nice(x.action)}</strong><small>{x.actor} · {x.entity_type} · {x.entity_id} · {x.created_at}</small></div></div>)}{!audit.length && <Empty>No audit records.</Empty>}</div><div className="panel"><h2>Transaction tracking</h2>{transactions.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{x.item_description} · {x.quantity} units</strong><small>{x.buyer_name} → {x.seller_name} · {nice(x.transaction_status)} · {x.created_at}</small></div></div>)}{!transactions.length && <Empty>No tracked transactions yet.</Empty>}</div></section>}
       </div>
     </main>
-    {newDeal && <NewNegotiation agents={agents} onClose={() => setNewDeal(false)} onDone={() => { setNewDeal(false); setPage("Negotiations"); }} />}
+    {newDeal && <NewNegotiation agents={agents} onClose={() => setNewDeal(false)} onDone={() => { setNewDeal(false); setPage("Negotiations"); }} />}{payDeal && <PaymentFlow deal={payDeal} onClose={() => setPayDeal(null)} onUpdated={() => { load(); }} />}
   </div>;
 }
 
@@ -186,4 +187,47 @@ function NewNegotiation({ agents, onClose, onDone }) {
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
   return <div className="overlay" onMouseDown={e => e.target === e.currentTarget && onClose()}><form className="modal" onSubmit={submit}><button type="button" className="close" onClick={onClose}>×</button><span className="eyebrow">BACKEND-VALIDATED</span><h2>Start a negotiation</h2><p>Both agents must be active and have valid mandates.</p>{error && <Notice tone="error">{error}</Notice>}{!active.some(a => a.role === "buyer") || !active.some(a => a.role === "seller") ? <Notice tone="error">You need an active buyer and seller agent with saved mandates before starting.</Notice> : <><label>Buyer agent<select value={buyer} onChange={e => setBuyer(e.target.value)} required><option value="">Choose buyer</option>{active.filter(a => a.role === "buyer").map(a => <option value={a.id} key={a.id}>{a.name}</option>)}</select></label><label>Seller agent<select value={seller} onChange={e => setSeller(e.target.value)} required><option value="">Choose seller</option>{active.filter(a => a.role === "seller").map(a => <option value={a.id} key={a.id}>{a.name}</option>)}</select></label><label>Item<input value={item} onChange={e => setItem(e.target.value)} required placeholder="e.g. Cement" /></label><div className="two"><label>Quantity<input type="number" min="1" step="1" value={quantity} onChange={e => setQuantity(e.target.value)} required /></label><label>Initial offer per unit (KES)<input type="number" min="0.01" step="0.01" value={offer} onChange={e => setOffer(e.target.value)} required /></label></div><Button type="submit" disabled={busy}>{busy ? "Submitting…" : "Submit to BATN"}</Button></>}<Button kind="ghost" onClick={onClose}>Cancel</Button></form></div>;
+}
+function PaymentFlow({ deal, onClose, onUpdated }) {
+  const [phone, setPhone] = useState("");
+  const [payment, setPayment] = useState(null);
+  const [seconds, setSeconds] = useState(60);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const finished = payment && ["paid", "failed", "cancelled"].includes(payment.status);
+  useEffect(() => {
+    if (!payment || finished) return;
+    const poll = setInterval(async () => {
+      try {
+        const result = await request("/payments/" + payment.id);
+        setPayment(result.payment);
+        if (["paid", "failed", "cancelled"].includes(result.payment.status)) onUpdated();
+      } catch (_) {}
+    }, 3000);
+    return () => clearInterval(poll);
+  }, [payment?.id, payment?.status, finished]);
+  useEffect(() => {
+    if (!payment || finished || seconds <= 0) return;
+    const timer = setTimeout(() => setSeconds(s => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [payment, finished, seconds]);
+  async function start() {
+    setBusy(true); setError("");
+    try {
+      const result = await request("/payments/initiate", { method: "POST", body: JSON.stringify({ negotiationId: deal.id, phone }) });
+      setPayment(result.payment); setSeconds(60); onUpdated();
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  async function retry() {
+    setBusy(true); setError("");
+    try {
+      const result = await request("/payments/" + payment.id + "/retry", { method: "POST", body: JSON.stringify({ phone }) });
+      setPayment(result.payment); setSeconds(60);
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  return <div className="overlay"><div className="modal"><button className="close" onClick={onClose}>×</button><span className="eyebrow">M-PESA PAYMENT</span><h2>{payment ? "Payment status" : "Pay approved deal"}</h2><p>{deal.item_description} · {deal.quantity} units</p><h2>{money(Number(deal.final_price) * Number(deal.quantity))}</h2>{error && <Notice tone="error">{error}</Notice>}
+    {!payment ? <><label>M-Pesa phone number<input value={phone} onChange={e => setPhone(e.target.value)} placeholder="0712345678" /></label><small>We'll send an M-Pesa prompt to this number.</small><Button onClick={start} disabled={busy || !phone.trim()}>{busy ? "Sending…" : "Send M-Pesa prompt"}</Button></> :
+    <><p>{payment.status === "paid" ? "✓ Payment received. Receipt: " + (payment.mpesa_receipt || "confirmed") : payment.status === "failed" ? "Payment didn't go through. You haven't been charged. Try again." : payment.status === "cancelled" ? "You cancelled the payment." : payment.failure_reason === "Timed out waiting for M-Pesa" ? "We didn't get a response from M-Pesa. If money left your account, don't pay again. Check History or contact us." : "Check your phone and enter your M-Pesa PIN."}</p>{!finished && <p>Waiting for M-Pesa · {seconds}s</p>}{payment.status === "failed" || payment.status === "cancelled" ? <Button onClick={retry} disabled={busy}>Retry</Button> : null}{payment.failure_reason === "Timed out waiting for M-Pesa" && <Notice tone="error">Do not submit another payment until you confirm whether money left your account.</Notice>}</>}
+    <Button kind="ghost" onClick={onClose}>Close</Button>
+  </div></div>;
 }
