@@ -1,6 +1,7 @@
 const { randomUUID } = require("crypto");
 const db = require("../database/db");
 const { assessRisk, saveRiskAssessment } = require("./riskEngine");
+const { allowedItemsMatch } = require("./mandateUtils");
 
 const jobsRunning = new Set();
 
@@ -42,16 +43,7 @@ function log(actor, action, entityId, details = {}) {
 }
 
 function allowedItem(allowedItems, description) {
-  if (allowedItems === "*") return true;
-
-  try {
-    const list = JSON.parse(allowedItems);
-    return list.some(
-      item => item.toLowerCase() === description.trim().toLowerCase()
-    );
-  } catch {
-    return false;
-  }
+  return allowedItemsMatch(allowedItems, description);
 }
 
 function getJob(id) {
