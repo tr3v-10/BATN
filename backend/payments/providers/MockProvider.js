@@ -22,10 +22,14 @@ class MockProvider {
     if (!response || typeof response !== "object") {
       throw new Error("Invalid mock callback payload.");
     }
+    const externalReference = response.ExternalReference || response.externalReference;
+    const callbackStatus = String(response.Status || response.status || "").toUpperCase();
+    const mockStatus = callbackStatus === "SUCCESS" ? "SUCCESS" : callbackStatus === "FAILED" ? "FAILED" : callbackStatus === "CANCELLED" || callbackStatus === "CANCELED" ? "CANCELLED" : "QUEUED";
+    if (externalReference) this.setStatus("MOCK-" + externalReference, mockStatus, { MpesaReceiptNumber: response.MpesaReceiptNumber || null });
     return {
       amount: Number(response.Amount ?? response.amount),
       checkoutRequestId: response.CheckoutRequestID || response.checkoutRequestId || null,
-      externalReference: response.ExternalReference || response.externalReference,
+      externalReference,
       merchantRequestId: response.MerchantRequestID || response.merchantRequestId || null,
       mpesaReceiptNumber: response.MpesaReceiptNumber || response.mpesaReceiptNumber || null,
       phone: response.Phone || response.phone || null,
