@@ -1,6 +1,9 @@
 
 import { useEffect, useState } from "react";
 
+const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/+$/, "");
+const API = `${API_BASE}/api`;
+
 export default function NegotiationLab() {
   const [agents, setAgents] = useState([]);
   const [jobs, setJobs] = useState([]);
@@ -10,7 +13,7 @@ export default function NegotiationLab() {
   const [quantity, setQuantity] = useState(2);
   const [offer, setOffer] = useState(7800);
   const [delay, setDelay] = useState(2);
-  const [autoPayment, setAutoPayment] = useState(false);
+  const [autoPayment, setAutoPayment] = useState(true);
   const [selectedJob, setSelectedJob] = useState(null);
   const [messages, setMessages] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -19,8 +22,8 @@ export default function NegotiationLab() {
   async function loadData() {
     try {
       const [agentResponse, jobResponse] = await Promise.all([
-        fetch("http://localhost:5000/api/agents"),
-        fetch("http://localhost:5000/api/automation")
+        fetch(`${API}/agents`),
+        fetch(`${API}/automation`)
       ]);
 
       const agentData = await agentResponse.json();
@@ -59,7 +62,7 @@ export default function NegotiationLab() {
     setError("");
 
     try {
-      const response = await fetch("http://localhost:5000/api/automation", {
+      const response = await fetch(`${API}/automation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -93,7 +96,7 @@ export default function NegotiationLab() {
     setSelectedJob(id);
     try {
       const response = await fetch(
-        `http://localhost:5000/api/automation/${id}/messages`
+        `${API}/automation/${id}/messages`
       );
       const data = await response.json();
       setMessages(data.messages || []);
@@ -108,7 +111,7 @@ export default function NegotiationLab() {
     async function refreshMessages() {
       try {
         const response = await fetch(
-          `http://localhost:5000/api/automation/${selectedJob}/messages`
+          `${API}/automation/${selectedJob}/messages`
         );
         const data = await response.json();
         setMessages(data.messages || []);
@@ -185,8 +188,11 @@ export default function NegotiationLab() {
             <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "12px 0" }}>
               <input type="checkbox" checked={autoPayment}
                 onChange={e => setAutoPayment(e.target.checked)}/>
-              Enable simulated auto-payment
+              Enable simulated auto-payment (recommended)
             </label>
+            <small style={{ display: "block", opacity: 0.7, margin: "-4px 0 14px" }}>
+              This creates a transaction record and a mock payment intent only. No real money moves.
+            </small>
 
             <button disabled={busy || !buyer || !seller || buyer === seller}
               style={buttonStyle}>
