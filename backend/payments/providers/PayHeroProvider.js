@@ -48,16 +48,21 @@ class PayHeroProvider {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
           const ambiguous = method === "POST" && response.status >= 500;
-          const providerMessage = [data.message, data.error, data.detail, data.description]
-            .find(value => typeof value === "string" && value.trim());
+          // PayHero's documented v2 error payload uses error_message and
+          // error_code (not only message/error/detail/description).
+          const providerMessage = [
+            data.error_message, data.message, data.error, data.detail, data.description
+          ].find(value => typeof value === "string" && value.trim());
+          const providerCode = typeof data.error_code === "string" ? data.error_code : null;
           const safeMessage = providerMessage
             ? providerMessage.replace(/[\\r\\n\\t]+/g, " ").slice(0, 240)
             : "PayHero rejected the payment request.";
+          const diagnostic = providerCode ? " [" + providerCode.slice(0, 80) + "]" : "";
           throw new ProviderError(
             "PAYHERO_HTTP_" + response.status,
             ambiguous
               ? "PayHero did not confirm whether the payment request was accepted. Check the PayHero dashboard before retrying."
-              : "PayHero rejected the request: " + safeMessage,
+              : "PayHero rejected the request: " + safeMessage + diagnostic,
             { ambiguous, httpStatus: response.status, providerMessage: safeMessage }
           );
         }
