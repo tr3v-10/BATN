@@ -193,6 +193,9 @@ async function handleCallback(payload) {
   }
 
   if (payment.status === "paid") return payment;
+  const callbackJson = JSON.stringify(payload);
+  const duplicate = db.prepare("SELECT 1 FROM payment_events WHERE payment_id = ? AND type = ? AND raw_payload = ?").get(payment.id, "callback_received", callbackJson);
+  if (duplicate) return payment;
   addEvent(payment.id, "callback_received", payload);
   db.prepare("UPDATE payment_intents SET callback_received_at = CURRENT_TIMESTAMP WHERE id = ?").run(payment.id);
 
