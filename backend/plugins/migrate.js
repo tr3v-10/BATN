@@ -1,4 +1,7 @@
-const crypto = require("crypto");
+function ensureColumn(db, table, name, type) {
+  const existing = new Set(db.prepare("PRAGMA table_info(" + table + ")").all().map(row => row.name));
+  if (!existing.has(name)) db.exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + type);
+}
 
 function migratePlugins(db) {
   db.exec(`
@@ -25,6 +28,27 @@ function migratePlugins(db) {
       ON plugin_api_keys(key_hash);
     CREATE INDEX IF NOT EXISTS idx_plugin_api_keys_marketplace
       ON plugin_api_keys(marketplace_id, revoked_at);
+  `);
+
+  // Existing records remain legacy/unassigned (NULL); only new plugin API
+  // operations create rows with a marketplace_id.
+  const ownershipTables = [
+    "users", "agents", "agent_mandates", "negotiation_sessions",
+    "negotiations", "risk_assessments", "payment_intents",
+    "transaction_tracking", "transactions", "agreements", "payments",
+    "audit_logs"
+  ];
+  for (const table of ownershipTables) ensureColumn(db, table, "marketplace_id", "TEXT");
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_users_marketplace ON users(marketplace_id);
+    CREATE INDEX IF NOT EXISTS idx_agents_marketplace ON agents(marketplace_id);
+    CREATE INDEX IF NOT EXISTS idx_mandates_marketplace ON agent_mandates(marketplace_id);
+    CREATE INDEX IF NOT EXISTS idx_negotiations_marketplace ON negotiations(marketplace_id);
+    CREATE INDEX IF NOT EXISTS idx_risk_marketplace ON risk_assessments(marketplace_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_marketplace ON payment_intents(marketplace_id);
+    CREATE INDEX IF NOT EXISTS idx_tracking_marketplace ON transaction_tracking(marketplace_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_marketplace ON audit_logs(marketplace_id);
   `);
 }
 
