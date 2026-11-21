@@ -1,4 +1,5 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 const automationRoutes = require("./routes/automation");
 const automationEngine = require("./services/automationEngine");
 const riskRoutes = require("./routes/risk");
@@ -12,6 +13,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const paymentRoutes = require("./routes/payments");
 const transactionRoutes = require("./routes/transactions");
+const voiceRoutes = require("./routes/voice");
 app.use(cors());
 app.use(express.json());
 app.use("/api/payments", paymentRoutes);
@@ -20,6 +22,7 @@ app.use("/api/mandates", mandateRoutes);
 app.use("/api/risk", riskRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/automation", automationRoutes);
+app.use("/api/voice", voiceRoutes);
 // ------------------------------------
 // HELPER: WRITE TO AUDIT LOG
 // ------------------------------------
