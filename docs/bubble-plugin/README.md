@@ -14,10 +14,14 @@ JADILI is being adapted as a Bubble plugin backed by the existing Node/Express A
 
 The backend currently provides:
 - Marketplace tenant and hashed API-key tables.
+- Additive tenant ownership columns on marketplace data tables. Existing records remain unassigned (NULL) and are not automatically exposed to a new marketplace.
 - Operator-protected marketplace provisioning at `POST /api/plugin/v1/marketplaces`.
 - Bearer-key authentication and tenant identity lookup at `GET /api/plugin/v1/me`.
+- Tenant-scoped users, agents, mandates, negotiations, risk-review queue/review, payments, and transaction-history endpoints under `/api/plugin/v1`.
 
-The existing legacy agents, mandates, negotiations, risk, transaction, and payment routes are **not yet tenant-scoped**. Do not expose or call those routes from the public Bubble plugin until the tenant-scoping migration and authorization checks are complete. This deliberate boundary prevents cross-marketplace data exposure.
+The original legacy endpoints remain available for the existing demo and are **not** part of the Bubble plugin contract. Bubble must call only `/api/plugin/v1/*`. Do not configure Bubble to call legacy routes such as `/api/agents`, `/api/negotiations`, or `/api/payments`, because those routes are not tenant-scoped.
+
+The Bubble app builder must also enforce its own Bubble privacy rules and workflow permissions before exposing actions such as agent creation, negotiation, or risk review to end users. The API key identifies the marketplace installation; it is not an individual Bubble user's identity.
 
 ## Backend configuration
 
@@ -40,6 +44,30 @@ Validate a key:
 curl "$JADILI_API_URL/api/plugin/v1/me" \
   -H "Authorization: Bearer jad_live_REDACTED"
 ```
+
+## Version 1 API contract
+
+All plugin routes require `Authorization: Bearer <private JADILI API key>`, except the operator-only marketplace provisioning route.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/api/plugin/v1/marketplaces` | Provision tenant (operator secret only) |
+| GET | `/api/plugin/v1/me` | Validate installation and return marketplace identity |
+| POST / GET | `/api/plugin/v1/users` | Create idempotent Bubble user mapping / list marketplace users |
+| POST / GET | `/api/plugin/v1/agents` | Create / list buyer and seller agents |
+| PUT / GET | `/api/plugin/v1/agents/:agentId/mandate` | Save / retrieve agent mandate |
+| POST / GET | `/api/plugin/v1/negotiations` | Start negotiation / list marketplace negotiations |
+| GET | `/api/plugin/v1/negotiations/:negotiationId/messages` | Read negotiation message history |
+| GET | `/api/plugin/v1/risk/review-queue` | List negotiations awaiting risk review |
+| POST | `/api/plugin/v1/negotiations/:negotiationId/risk-review` | Approve/reject a risk review |
+| POST | `/api/plugin/v1/payments/initiate` | Initiate payment for eligible accepted negotiation |
+| GET | `/api/plugin/v1/payments` | List marketplace payments |
+| GET | `/api/plugin/v1/payments/:paymentId` | Read payment and event history |
+| GET | `/api/plugin/v1/transactions` | List marketplace transaction tracking |
+
+User creation requires `name` and `external_user_id`; the external ID should be Bubble's stable `Current User's unique id`. Agent creation requires `owner_id`, `name`, and `role` (`buyer` or `seller`). Mandate fields mirror the existing JADILI mandate contract. Negotiation creation requires buyer/seller agent IDs, item description, quantity, and initial offer.
+
+Payment initiation uses `negotiation_id` and a Kenyan mobile number. It returns a masked phone number and payment status. Keep PayHero credentials on the JADILI backend only.
 
 ## Bubble plugin editor plan
 
