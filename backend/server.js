@@ -6,6 +6,7 @@ const { randomUUID } = require("crypto");
 const db = require("./database/db");
 const negotiationsRouter = require("./routes/negotiations");
 const mandateRoutes = require("./routes/mandates");
+const voiceRoutes = require("./routes/voice");
 const app = express();
 const PORT = process.env.PORT || 5000;
 const paymentRoutes = require("./routes/payments");
@@ -24,6 +25,7 @@ app.use("/api/negotiations", negotiationsRouter);
 app.use("/api/mandates", mandateRoutes);
 app.use("/api/risk", riskRoutes);
 app.use("/api/transactions", transactionRoutes);
+app.use("/api/voice", voiceRoutes);
 // ------------------------------------
 // HELPER: WRITE TO AUDIT LOG
 // ------------------------------------
