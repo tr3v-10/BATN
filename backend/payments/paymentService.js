@@ -106,6 +106,9 @@ async function createAndInitiatePayment(negotiationId, phone, options = {}) {
   } else {
     if (payment.status !== "failed") return payment;
     if (!options.allowRetry) return payment;
+    if (payment.failure_reason === "Timed out waiting for M-Pesa") {
+      throw Object.assign(new Error("Payment outcome needs manual reconciliation. Do not retry until you confirm whether money was deducted."), { code: "MANUAL_RECONCILIATION_REQUIRED" });
+    }
     if (payment.amount !== amount) throw new Error("Deal amount changed after the original payment attempt.");
     const nextAttempt = (payment.attempt_count || 1) + 1;
     transition(payment, "pending", {
