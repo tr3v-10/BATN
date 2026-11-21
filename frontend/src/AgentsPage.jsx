@@ -34,7 +34,7 @@ function formatAllowedItems(value) {
   const items = (Array.isArray(parsed) ? parsed : String(parsed).split(","))
     .flat(Infinity)
     .filter(item => typeof item === "string")
-    .map(item => item.trim().replace(/^[\\s\\[\\]"]+|[\\s\\[\\]"]+$/g, ""))
+    .map(item => item.trim().replace(/^[\s\[\]"]+|[\s\[\]"]+$/g, ""))
     .filter(Boolean);
 
   return items.length ? [...new Set(items)].join(", ") : "*";
