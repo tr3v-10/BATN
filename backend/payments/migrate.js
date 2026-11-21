@@ -1,10 +1,8 @@
-const db = require("../database/db");
-
 function columns(table) {
   return new Set(db.prepare("PRAGMA table_info(" + table + ")").all().map(row => row.name));
 }
 
-function migratePayments() {
+function migratePayments(db) {
   const existing = columns("payment_intents");
   const additions = [
     ["checkout_request_id", "TEXT"],
