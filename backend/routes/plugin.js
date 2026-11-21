@@ -425,4 +425,65 @@ router.get("/transactions", requirePluginKey, (req, res) => {
   res.json({ count: transactions.length, transactions });
 });
 
+router.post("/negotiations/:negotiationId/owner-approval", requirePluginKey, (req, res) => {
+  const externalUserId = typeof req.body?.external_user_id === "string" ? req.body.external_user_id.trim() : "";
+  if (!externalUserId) return res.status(400).json({ error: { code: "OWNER_ID_REQUIRED", message: "external_user_id is required." } });
+
+  const negotiation = db.prepare(`
+    SELECT n.*, ba.owner_id AS buyer_owner_id, sa.owner_id AS seller_owner_id,
+           bm.requires_approval AS buyer_requires_approval,
+           sm.requires_approval AS seller_requires_approval
+    FROM negotiations n
+    JOIN agents ba ON ba.id = n.buyer_agent_id
+    JOIN agents sa ON sa.id = n.seller_agent_id
+    JOIN agent_mandates bm ON bm.agent_id = ba.id AND bm.marketplace_id = n.marketplace_id
+    JOIN agent_mandates sm ON sm.agent_id = sa.id AND sm.marketplace_id = n.marketplace_id
+    WHERE n.id = ? AND n.marketplace_id = ?
+  `).get(req.params.negotiationId, req.marketplace.id);
+  if (!negotiation) return res.status(404).json({ error: { code: "NEGOTIATION_NOT_FOUND", message: "Negotiation not found in this marketplace." } });
+  if (!["pending_approval", "pending_risk_review"].includes(negotiation.status)) {
+    return res.status(409).json({ error: { code: "NOT_AWAITING_APPROVAL", message: "This negotiation is not awaiting owner approval." } });
+  }
+
+  const owner = db.prepare("SELECT id FROM users WHERE marketplace_id = ? AND external_id = ?")
+    .get(req.marketplace.id, externalUserId);
+  if (!owner) return res.status(403).json({ error: { code: "OWNER_NOT_FOUND", message: "This Bubble user is not registered as a marketplace owner." } });
+
+  const approvesBuyer = negotiation.buyer_requires_approval === 1 && negotiation.buyer_owner_id === owner.id;
+  const approvesSeller = negotiation.seller_requires_approval === 1 && negotiation.seller_owner_id === owner.id;
+  if (!approvesBuyer && !approvesSeller) {
+    return res.status(403).json({ error: { code: "NOT_AUTHORIZED_FOR_APPROVAL", message: "This owner is not authorized to approve either side of this deal." } });
+  }
+
+  const approve = db.transaction(() => {
+    if (approvesBuyer) db.prepare("UPDATE negotiations SET buyer_approved_at = COALESCE(buyer_approved_at, CURRENT_TIMESTAMP) WHERE id = ? AND marketplace_id = ?").run(negotiation.id, req.marketplace.id);
+    if (approvesSeller) db.prepare("UPDATE negotiations SET seller_approved_at = COALESCE(seller_approved_at, CURRENT_TIMESTAMP) WHERE id = ? AND marketplace_id = ?").run(negotiation.id, req.marketplace.id);
+  });
+  approve();
+
+  const current = db.prepare("SELECT * FROM negotiations WHERE id = ? AND marketplace_id = ?").get(negotiation.id, req.marketplace.id);
+  const buyerApproved = negotiation.buyer_requires_approval !== 1 || !!current.buyer_approved_at;
+  const sellerApproved = negotiation.seller_requires_approval !== 1 || !!current.seller_approved_at;
+  const risk = db.prepare("SELECT decision, reviewed FROM risk_assessments WHERE negotiation_id = ? AND marketplace_id = ?").get(negotiation.id, req.marketplace.id);
+  const riskCleared = !risk || (risk.decision === "allow" && risk.reviewed === 1);
+  let status = current.status;
+  let finalPrice = current.final_price;
+
+  if (buyerApproved && sellerApproved && riskCleared) {
+    finalPrice = current.initial_offer >= current.seller_min_price ? current.initial_offer : current.seller_min_price;
+    status = "accepted";
+    db.prepare("UPDATE negotiations SET status = ?, final_price = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND marketplace_id = ?")
+      .run(status, finalPrice, current.id, req.marketplace.id);
+    db.prepare("UPDATE negotiation_sessions SET status = ?, agreed_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND marketplace_id = ?")
+      .run(status, finalPrice, current.id, req.marketplace.id);
+  }
+
+  db.prepare("INSERT INTO audit_logs (id,actor,action,entity_type,entity_id,details,marketplace_id) VALUES (?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), externalUserId, "owner_approval_recorded", "negotiation", current.id,
+      JSON.stringify({ buyer_approved: buyerApproved, seller_approved: sellerApproved, risk_cleared: riskCleared }), req.marketplace.id);
+
+  res.json({ negotiation_id: current.id, buyer_approved: buyerApproved, seller_approved: sellerApproved,
+    risk_cleared: riskCleared, status, final_price: finalPrice });
+});
+
 module.exports = router;
