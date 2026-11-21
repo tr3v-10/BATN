@@ -52,6 +52,7 @@ router.post("/:id/retry", retryLimiter, async (req, res) => {
   const payment = service.getPayment(req.params.id);
   if (!payment) return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found.");
   if (payment.status !== "failed") return fail(res, 409, "RETRY_NOT_ALLOWED", "Only failed payments can be retried.");
+  if (payment.failure_reason === "Timed out waiting for M-Pesa") return fail(res, 409, "MANUAL_RECONCILIATION_REQUIRED", "Do not retry until you confirm whether money was deducted.");
   try {
     const updated = await service.createAndInitiatePayment(payment.negotiation_id, req.body?.phone || "", { allowRetry: true });
     res.json({ payment: updated });
