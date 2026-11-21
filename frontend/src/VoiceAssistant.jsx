@@ -22,6 +22,15 @@ async function request(path, options = {}) {
   return data;
 }
 
+const speechErrors = {
+  "not-allowed": "Microphone permission is blocked. Allow microphone access for this site, then try again.",
+  "service-not-allowed": "Speech recognition is blocked by the browser. Try Chrome or Edge on localhost.",
+  "audio-capture": "No microphone was found. Check that a microphone is connected and enabled.",
+  network: "Speech recognition could not connect. Check your internet connection and try again.",
+  "no-speech": "No speech was detected. Press Speak and try again.",
+  aborted: "Listening stopped. Press Speak when you are ready to try again."
+};
+
 export default function VoiceAssistant() {
   const [open, setOpen] = useState(false);
   const [sourceLanguage, setSourceLanguage] = useState("en");
@@ -33,9 +42,11 @@ export default function VoiceAssistant() {
   const [sellerId, setSellerId] = useState("");
   const [autoMode, setAutoMode] = useState(false);
   const [listening, setListening] = useState(false);
+  const [speechStatus, setSpeechStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const recognitionRef = useRef(null);
+  const finalTranscriptRef = useRef("");
 
   useEffect(() => {
     request("/agents")
@@ -43,28 +54,77 @@ export default function VoiceAssistant() {
       .catch(() => setAgents([]));
 
     return () => {
-      recognitionRef.current?.stop();
+      recognitionRef.current?.abort?.();
       window.speechSynthesis?.cancel();
     };
   }, []);
 
+  function stopListening() {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    setSpeechStatus("Finishing…");
+    try {
+      recognition.stop();
+    } catch {
+      setListening(false);
+      setSpeechStatus("");
+    }
+  }
+
   function startListening() {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) {
-      setError("Voice recognition is not available in this browser. Type your request instead.");
+      setError("Voice recognition is not available in this browser. Try Chrome or Edge, or type your request instead.");
       return;
     }
+
     setError("");
+    setText("");
+    finalTranscriptRef.current = "";
     const recognition = new Recognition();
     recognition.lang = sourceLanguage === "sw" ? "sw-KE" : "en-US";
-    recognition.interimResults = false;
+    recognition.continuous = true;
+    recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-    recognition.onresult = (event) => setText(event.results[0][0].transcript);
-    recognition.onerror = (event) => setError(`Microphone issue: ${event.error}. You can type your request.`);
-    recognition.onend = () => setListening(false);
+
+    recognition.onstart = () => {
+      setListening(true);
+      setSpeechStatus("Listening — speak now, then press Stop when finished.");
+    };
+
+    recognition.onresult = (event) => {
+      let interim = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const transcript = event.results[index][0]?.transcript || "";
+        if (event.results[index].isFinal) finalTranscriptRef.current += `${transcript} `;
+        else interim += transcript;
+      }
+      setText(`${finalTranscriptRef.current}${interim}`.trim());
+    };
+
+    recognition.onerror = (event) => {
+      const message = speechErrors[event.error] || `Microphone issue (${event.error}). You can type your request instead.`;
+      setError(message);
+      setSpeechStatus("");
+      setListening(false);
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+      setSpeechStatus((current) => current.startsWith("Finishing") ? "Voice captured. You can edit it or press Send." : "");
+      recognitionRef.current = null;
+    };
+
     recognitionRef.current = recognition;
-    setListening(true);
-    recognition.start();
+    setSpeechStatus("Starting microphone…");
+    try {
+      recognition.start();
+    } catch (startError) {
+      recognitionRef.current = null;
+      setListening(false);
+      setSpeechStatus("");
+      setError(startError.message || "Could not start the microphone. Check browser permission and try again.");
+    }
   }
 
   async function submitRequest(event) {
@@ -72,6 +132,7 @@ export default function VoiceAssistant() {
     if (!text.trim() || busy) return;
     setBusy(true);
     setError("");
+    setSpeechStatus("");
     setResult(null);
 
     try {
@@ -129,50 +190,49 @@ export default function VoiceAssistant() {
 
   return (
     <>
-      <button className="voice-launch" onClick={() => setOpen((value) => !value)} aria-label={open ? "Close voice assistant" : "Open voice assistant"}>
+      <button className="voice-launch" onClick={() => setOpen((value) => !value)} aria-label={open ? "Close voice assistant" : "Open voice assistant"} aria-expanded={open}>
         {open ? <X size={20} /> : <Mic size={20} />}
         <span>{open ? "Close assistant" : "Voice AI"}</span>
       </button>
-      {open && (
-        <section className="voice-panel" aria-label="BATN voice assistant">
-          <header className="voice-heading">
-            <div><span className="voice-kicker">BATN ASSISTANT</span><h2>Speak, translate, act</h2></div>
-            <button type="button" className="voice-close" onClick={() => setOpen(false)} aria-label="Close assistant"><X size={18} /></button>
-          </header>
-          <div className="voice-languages">
-            <label>Speak in<select value={sourceLanguage} onChange={(event) => setSourceLanguage(event.target.value)}><option value="en">English</option><option value="sw">Kiswahili</option></select></label>
-            <Languages size={17} aria-hidden="true" />
-            <label>Translate to<select value={targetLanguage} onChange={(event) => setTargetLanguage(event.target.value)}><option value="sw">Kiswahili</option><option value="en">English</option></select></label>
+      <section className={`voice-panel ${open ? "is-open" : ""}`} aria-label="BATN voice assistant" aria-hidden={!open}>
+        <header className="voice-heading">
+          <div><span className="voice-kicker">BATN ASSISTANT</span><h2>Speak, translate, act</h2></div>
+          <button type="button" className="voice-close" onClick={() => setOpen(false)} aria-label="Close assistant"><X size={18} /></button>
+        </header>
+        <div className="voice-languages">
+          <label>Speak in<select value={sourceLanguage} onChange={(event) => setSourceLanguage(event.target.value)} disabled={listening}><option value="en">English</option><option value="sw">Kiswahili</option></select></label>
+          <Languages size={17} aria-hidden="true" />
+          <label>Translate to<select value={targetLanguage} onChange={(event) => setTargetLanguage(event.target.value)}><option value="sw">Kiswahili</option><option value="en">English</option></select></label>
+        </div>
+        <form onSubmit={submitRequest}>
+          <label className="voice-input-label" htmlFor="voice-command">Your request</label>
+          <textarea id="voice-command" value={text} onChange={(event) => setText(event.target.value)} maxLength={2000} placeholder={sourceLanguage === "sw" ? "Sema au andika ombi lako…" : "Speak or type your request…"} rows={3} />
+          {speechStatus && <p className={`speech-status ${listening ? "is-listening" : ""}`} role="status">{listening && <span className="speech-pulse" />}{speechStatus}</p>}
+          <div className="voice-controls">
+            <button type="button" className={`voice-mic ${listening ? "is-listening" : ""}`} onClick={listening ? stopListening : startListening} aria-label={listening ? "Stop listening" : "Start voice input"}>
+              {listening ? <MicOff size={17} /> : <Mic size={17} />}{listening ? "Stop" : "Speak"}
+            </button>
+            <button type="submit" className="voice-send" disabled={busy || listening || !text.trim()}>{busy ? "Working…" : "Send"}<Send size={15} /></button>
           </div>
-          <form onSubmit={submitRequest}>
-            <label className="voice-input-label" htmlFor="voice-command">Your request</label>
-            <textarea id="voice-command" value={text} onChange={(event) => setText(event.target.value)} maxLength={2000} placeholder={sourceLanguage === "sw" ? "Sema au andika ombi lako…" : "Speak or type your request…"} rows={3} />
-            <div className="voice-controls">
-              <button type="button" className={`voice-mic ${listening ? "is-listening" : ""}`} onClick={listening ? () => recognitionRef.current?.stop() : startListening} aria-label={listening ? "Stop listening" : "Start voice input"}>
-                {listening ? <MicOff size={17} /> : <Mic size={17} />}{listening ? "Stop" : "Speak"}
-              </button>
-              <button type="submit" className="voice-send" disabled={busy || !text.trim()}>{busy ? "Working…" : "Send"}<Send size={15} /></button>
-            </div>
-          </form>
-          <label className="auto-mode">
-            <input type="checkbox" checked={autoMode} onChange={(event) => setAutoMode(event.target.checked)} />
-            <span><strong>Mandate-based agent mode</strong><small>Agents may negotiate and create a simulated payment intent when BATN policy allows.</small></span>
-          </label>
-          {autoMode && <div className="voice-agent-selectors">
-            <label>Active buyer<select value={buyerId} onChange={(event) => setBuyerId(event.target.value)}><option value="">Choose buyer</option>{buyers.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
-            <label>Active seller<select value={sellerId} onChange={(event) => setSellerId(event.target.value)}><option value="">Choose seller</option>{sellers.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
-            {(!buyers.length || !sellers.length) && <small>Activate a buyer and seller agent first.</small>}
-          </div>}
-          <p className="voice-safety-note">Automatic mode still enforces saved agent mandates and BATN risk checks. Approval or review stops automation. Payment is mock-only; no funds move.</p>
-          {error && <p className="voice-message voice-error" role="alert">{error}</p>}
-          {result && <div className="voice-result" aria-live="polite">
-            <div><strong>Translation</strong><button type="button" onClick={() => speak(result.translatedText || result.summary, targetLanguage)} aria-label="Speak translation"><Volume2 size={16} /></button></div>
-            <p>{result.translatedText || result.summary}</p>
-            {result.intent === "negotiate" && <small>Detected request: {result.negotiation?.quantity || "?"} × {result.negotiation?.item_description || "item unclear"}, KES {result.negotiation?.initial_offer ?? "?"} per unit</small>}
-            {result.actionResult && <p className="voice-action-result">{result.actionResult}</p>}
-          </div>}
-        </section>
-      )}
+        </form>
+        <label className="auto-mode">
+          <input type="checkbox" checked={autoMode} onChange={(event) => setAutoMode(event.target.checked)} />
+          <span><strong>Mandate-based agent mode</strong><small>Agents may negotiate and create a simulated payment intent when BATN policy allows.</small></span>
+        </label>
+        {autoMode && <div className="voice-agent-selectors">
+          <label>Active buyer<select value={buyerId} onChange={(event) => setBuyerId(event.target.value)}><option value="">Choose buyer</option>{buyers.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+          <label>Active seller<select value={sellerId} onChange={(event) => setSellerId(event.target.value)}><option value="">Choose seller</option>{sellers.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+          {(!buyers.length || !sellers.length) && <small>Activate a buyer and seller agent first.</small>}
+        </div>}
+        <p className="voice-safety-note">Automatic mode still enforces saved agent mandates and BATN risk checks. Approval or review stops automation. Payment is mock-only; no funds move.</p>
+        {error && <p className="voice-message voice-error" role="alert">{error}</p>}
+        {result && <div className="voice-result" aria-live="polite">
+          <div><strong>Translation</strong><button type="button" onClick={() => speak(result.translatedText || result.summary, targetLanguage)} aria-label="Speak translation"><Volume2 size={16} /></button></div>
+          <p>{result.translatedText || result.summary}</p>
+          {result.intent === "negotiate" && <small>Detected request: {result.negotiation?.quantity || "?"} × {result.negotiation?.item_description || "item unclear"}, KES {result.negotiation?.initial_offer ?? "?"} per unit</small>}
+          {result.actionResult && <p className="voice-action-result">{result.actionResult}</p>}
+        </div>}
+      </section>
     </>
   );
 }
