@@ -53,7 +53,7 @@ router.post("/:id/retry", retryLimiter, async (req, res) => {
   if (!payment) return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found.");
   if (payment.status !== "failed") return fail(res, 409, "RETRY_NOT_ALLOWED", "Only failed payments can be retried.");
   try {
-    const updated = await service.createAndInitiatePayment(payment.negotiation_id, req.body?.phone || "");
+    const updated = await service.createAndInitiatePayment(payment.negotiation_id, req.body?.phone || "", { allowRetry: true });
     res.json({ payment: updated });
   } catch (e) { fail(res, 400, e.code || "RETRY_FAILED", e.message || "Unable to retry payment."); }
 });
