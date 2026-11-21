@@ -165,4 +165,136 @@ router.get("/agents/:agentId/mandate", requirePluginKey, (req, res) => {
   res.json({ mandate });
 });
 
+function itemAllowed(allowedItems, description) {
+  if (allowedItems === "*") return true;
+  try {
+    return JSON.parse(allowedItems).some(item => item.toLowerCase() === description.trim().toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+router.post("/negotiations", requirePluginKey, (req, res) => {
+  const { buyer_agent_id, seller_agent_id, item_description, quantity, initial_offer } = req.body || {};
+  if (!buyer_agent_id || !seller_agent_id || typeof item_description !== "string" || !item_description.trim() ||
+      !Number.isInteger(quantity) || quantity <= 0 || !Number.isFinite(initial_offer) || initial_offer <= 0) {
+    return res.status(400).json({ error: { code: "INVALID_NEGOTIATION", message: "Buyer, seller, item, positive integer quantity and positive initial_offer are required." } });
+  }
+  if (buyer_agent_id === seller_agent_id) return res.status(400).json({ error: { code: "SAME_AGENT", message: "An agent cannot negotiate with itself." } });
+
+  const buyer = db.prepare("SELECT id, name, role, status FROM agents WHERE id = ? AND marketplace_id = ?").get(buyer_agent_id, req.marketplace.id);
+  const seller = db.prepare("SELECT id, name, role, status FROM agents WHERE id = ? AND marketplace_id = ?").get(seller_agent_id, req.marketplace.id);
+  if (!buyer || !seller) return res.status(404).json({ error: { code: "AGENT_NOT_FOUND", message: "Buyer or seller agent not found in this marketplace." } });
+  if (buyer.role !== "buyer" || seller.role !== "seller") return res.status(400).json({ error: { code: "INVALID_AGENT_ROLES", message: "A buyer agent and seller agent are required." } });
+  if (buyer.status !== "active" || seller.status !== "active") return res.status(409).json({ error: { code: "AGENT_INACTIVE", message: "Both agents must be active." } });
+
+  const buyerMandate = db.prepare("SELECT * FROM agent_mandates WHERE agent_id = ? AND marketplace_id = ?").get(buyer.id, req.marketplace.id);
+  const sellerMandate = db.prepare("SELECT * FROM agent_mandates WHERE agent_id = ? AND marketplace_id = ?").get(seller.id, req.marketplace.id);
+  if (!buyerMandate || !sellerMandate) return res.status(409).json({ error: { code: "MANDATE_REQUIRED", message: "Both agents need saved mandates." } });
+  if (!itemAllowed(buyerMandate.allowed_items, item_description) || !itemAllowed(sellerMandate.allowed_items, item_description)) {
+    return res.status(403).json({ error: { code: "ITEM_NOT_AUTHORIZED", message: "This item is outside one or both agent mandates." } });
+  }
+  if (quantity > buyerMandate.max_quantity || quantity > sellerMandate.max_quantity) {
+    return res.status(403).json({ error: { code: "QUANTITY_LIMIT", message: "Quantity exceeds an agent mandate." } });
+  }
+  if (initial_offer > buyerMandate.max_unit_price) return res.status(403).json({ error: { code: "BUYER_PRICE_LIMIT", message: "Initial offer exceeds the buyer's maximum unit price." } });
+
+  const buyerMax = buyerMandate.max_unit_price;
+  const sellerMin = sellerMandate.min_unit_price;
+  let candidatePrice = null;
+  let status = "rejected";
+  let message = "Seller's minimum price exceeds the buyer's authorized maximum.";
+  let messageType = "rejection";
+  let responsePrice = null;
+
+  if (initial_offer >= sellerMin) {
+    candidatePrice = initial_offer; status = "accepted"; message = "Seller accepted the buyer's offer."; messageType = "acceptance"; responsePrice = initial_offer;
+  } else if (sellerMin <= buyerMax) {
+    candidatePrice = sellerMin; status = "accepted"; message = "Seller counteroffer is within the buyer's authorized price limit."; messageType = "counteroffer_accepted"; responsePrice = sellerMin;
+  }
+
+  if (candidatePrice !== null) {
+    const total = candidatePrice * quantity;
+    if (total > buyerMandate.max_total_amount || total > sellerMandate.max_total_amount) {
+      return res.status(403).json({ error: { code: "TOTAL_LIMIT", message: "Transaction exceeds an agent's total spending mandate." } });
+    }
+  }
+
+  const negotiationId = crypto.randomUUID();
+  const requiresApproval = buyerMandate.requires_approval === 1 || sellerMandate.requires_approval === 1;
+  let finalPrice = candidatePrice;
+  if (status === "accepted" && requiresApproval) {
+    status = "pending_approval"; finalPrice = null; messageType = "approval_required"; message = "Proposed agreement requires human approval.";
+  }
+
+  let assessment = null;
+  if (candidatePrice !== null) {
+    const { assessRisk, saveRiskAssessment } = require("../services/riskengine");
+    assessment = assessRisk({
+      id: negotiationId, buyer_agent_id: buyer.id, seller_agent_id: seller.id,
+      item_description: item_description.trim(), quantity, total_amount: candidatePrice * quantity,
+      buyer_status: buyer.status, seller_status: seller.status,
+      buyer_max_total: buyerMandate.max_total_amount, seller_max_total: sellerMandate.max_total_amount,
+      marketplace_id: req.marketplace.id
+    });
+    assessment.marketplace_id = req.marketplace.id;
+    if (assessment.decision === "block") {
+      status = "blocked"; finalPrice = null; messageType = "risk_block"; message = "Negotiation blocked by the JADILI risk engine.";
+    } else if (assessment.decision === "review") {
+      status = "pending_risk_review"; finalPrice = null; messageType = "risk_review"; message = "Negotiation flagged for human risk review.";
+    }
+  }
+
+  const save = db.transaction(() => {
+    db.prepare("INSERT INTO negotiation_sessions (id,buyer_agent_id,seller_agent_id,status,agreed_amount,currency,description,marketplace_id) VALUES (?,?,?,?,?,'KES',?,?)")
+      .run(negotiationId, buyer.id, seller.id, status, finalPrice, item_description.trim(), req.marketplace.id);
+    db.prepare("INSERT INTO negotiations (id,buyer_agent_id,seller_agent_id,item_description,quantity,buyer_max_price,seller_min_price,initial_offer,final_price,status,marketplace_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(negotiationId, buyer.id, seller.id, item_description.trim(), quantity, buyerMax, sellerMin, initial_offer, finalPrice, status, req.marketplace.id);
+    db.prepare("INSERT INTO negotiation_messages (id,session_id,sender_agent_id,message_type,message,proposed_amount) VALUES (?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), negotiationId, buyer.id, "proposal", `Buyer proposed KES ${initial_offer} per unit for ${quantity} units of ${item_description.trim()}.`, initial_offer);
+    db.prepare("INSERT INTO negotiation_messages (id,session_id,sender_agent_id,message_type,message,proposed_amount) VALUES (?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), negotiationId, seller.id, messageType, message, responsePrice);
+    if (assessment) saveRiskAssessment(assessment);
+    db.prepare("INSERT INTO audit_logs (id,actor,action,entity_type,entity_id,details,marketplace_id) VALUES (?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), "bubble_plugin", "negotiation_created", "negotiation", negotiationId, JSON.stringify({ status, item_description: item_description.trim(), quantity }), req.marketplace.id);
+  });
+  save();
+
+  res.status(201).json({
+    negotiation: {
+      id: negotiationId, buyer_agent_id: buyer.id, seller_agent_id: seller.id,
+      item_description: item_description.trim(), quantity, initial_offer,
+      proposed_agreement_price: candidatePrice, final_price: finalPrice, status,
+      total_amount: candidatePrice === null ? null : candidatePrice * quantity,
+      requires_approval: requiresApproval
+    },
+    risk_assessment: assessment ? { score: assessment.risk_score, level: assessment.risk_level, flags: assessment.flags, decision: assessment.decision } : null
+  });
+});
+
+router.get("/negotiations", requirePluginKey, (req, res) => {
+  const rows = db.prepare(`
+    SELECT n.*, b.name AS buyer_name, s.name AS seller_name
+    FROM negotiations n
+    JOIN agents b ON b.id = n.buyer_agent_id
+    JOIN agents s ON s.id = n.seller_agent_id
+    WHERE n.marketplace_id = ? ORDER BY n.created_at DESC LIMIT 500
+  `).all(req.marketplace.id);
+  res.json({ count: rows.length, negotiations: rows });
+});
+
+router.get("/negotiations/:negotiationId/messages", requirePluginKey, (req, res) => {
+  const negotiation = db.prepare("SELECT id FROM negotiations WHERE id = ? AND marketplace_id = ?")
+    .get(req.params.negotiationId, req.marketplace.id);
+  if (!negotiation) return res.status(404).json({ error: { code: "NEGOTIATION_NOT_FOUND", message: "Negotiation not found in this marketplace." } });
+  const messages = db.prepare(`
+    SELECT m.id, m.message_type, m.message, m.proposed_amount, m.created_at,
+           a.name AS agent_name, a.role AS agent_role
+    FROM negotiation_messages m
+    LEFT JOIN agents a ON a.id = m.sender_agent_id
+    WHERE m.session_id = ? ORDER BY m.created_at ASC
+  `).all(negotiation.id);
+  res.json({ negotiation_id: negotiation.id, count: messages.length, messages });
+});
+
 module.exports = router;
