@@ -20,6 +20,7 @@ function addEvent(paymentId, type, payload = null) {
     INSERT INTO payment_events (id, payment_id, type, raw_payload)
     VALUES (?, ?, ?, ?)
   `).run(randomUUID(), paymentId, type, payload == null ? null : JSON.stringify(payload));
+  audit(paymentId, "payment_event_" + type, {});
 }
 
 function audit(paymentId, action, details = {}) {
@@ -77,10 +78,10 @@ function eligibleNegotiation(negotiationId) {
   return negotiation;
 }
 
-async function createAndInitiatePayment(negotiationId, phone) {
+async function createAndInitiatePayment(negotiationId, phone, options = {}) {
   const normalizedPhone = normalizeKenyanPhone(phone);
   const negotiation = eligibleNegotiation(negotiationId);
-  const amount = validateKesAmount(Math.round(negotiation.final_price * negotiation.quantity));
+  const amount = validateKesAmount(negotiation.final_price * negotiation.quantity);
   if (!Number.isSafeInteger(amount)) throw new Error("Payment amount is outside the supported range.");
 
   let payment = db.prepare("SELECT * FROM payment_intents WHERE negotiation_id = ?").get(negotiationId);
@@ -104,6 +105,7 @@ async function createAndInitiatePayment(negotiationId, phone) {
     audit(id, "payment_created", { negotiationId, amount, provider: payment.provider });
   } else {
     if (payment.status !== "failed") return payment;
+    if (!options.allowRetry) return payment;
     if (payment.amount !== amount) throw new Error("Deal amount changed after the original payment attempt.");
     const nextAttempt = (payment.attempt_count || 1) + 1;
     db.prepare(`
@@ -231,7 +233,7 @@ async function reconcile() {
     SELECT * FROM payment_intents
     WHERE status IN ('initiated', 'processing')
       AND initiated_at IS NOT NULL
-      AND initiated_at <= datetime('now', '-2 minutes')
+      AND julianday(initiated_at) <= julianday('now', '-2 minutes')
   `).all();
 
   for (const payment of rows) {
