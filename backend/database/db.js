@@ -1,4 +1,3 @@
-
 const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
@@ -22,8 +21,9 @@ const schema = fs.readFileSync(schemaPath, "utf8");
 // Initialize tables
 db.exec(schema);
 
-// Apply additive, idempotent payment migrations without replacing existing records.
+// Apply additive, idempotent migrations without replacing existing records.
 require("../payments/migrate")(db);
+require("../plugins/migrate")(db);
 
 console.log("BATN database initialized.");
 
