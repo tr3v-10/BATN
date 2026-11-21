@@ -16,6 +16,10 @@ class PayHeroProvider {
     if (!this.publicBaseUrl || !this.callbackSecret) {
       throw new Error("PUBLIC_BASE_URL and PAYHERO_CALLBACK_SECRET are required for PayHero callbacks.");
     }
+    let callbackBase;
+    try { callbackBase = new URL(this.publicBaseUrl); } catch { throw new Error("PUBLIC_BASE_URL must be a valid HTTPS URL."); }
+    if (callbackBase.protocol !== "https:") throw new Error("PUBLIC_BASE_URL must use HTTPS.");
+    if (this.callbackSecret.length < 32) throw new Error("PAYHERO_CALLBACK_SECRET must contain at least 32 characters.");
   }
 
   get authorization() {
