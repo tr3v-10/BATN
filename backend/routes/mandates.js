@@ -2,6 +2,7 @@
 const express = require("express");
 const { randomUUID } = require("crypto");
 const db = require("../database/db");
+const { normalizeAllowedItems } = require("../services/mandateUtils");
 
 const router = express.Router();
 
@@ -152,28 +153,16 @@ router.put("/:agentId", (req, res) => {
     }
 
 
-    // VALIDATE ITEM RESTRICTIONS
-    let itemsValue;
-
-    if (allowed_items === undefined || allowed_items === "*") {
-      itemsValue = "*";
-
-    } else if (
-      Array.isArray(allowed_items) &&
-      allowed_items.length > 0 &&
-      allowed_items.every(item =>
-        typeof item === "string" && item.trim().length > 0
-      )
-    ) {
-      itemsValue = JSON.stringify(
-        allowed_items.map(item => item.trim())
-      );
-
-    } else {
+    // ACCEPT arrays, JSON-encoded arrays and legacy comma-separated values.
+    const normalizedItems = normalizeAllowedItems(allowed_items);
+    if (normalizedItems !== "*" && normalizedItems.length === 0) {
       return res.status(400).json({
-        error: "Allowed items must be '*' or a non-empty array of item names."
+        error: "Allowed items must be '*' or a non-empty list of product names."
       });
     }
+    const itemsValue = normalizedItems === "*"
+      ? "*"
+      : JSON.stringify(normalizedItems);
 
 
     // NORMALIZE ROLE-SPECIFIC PRICE VALUES
