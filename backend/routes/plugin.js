@@ -356,4 +356,73 @@ router.post("/negotiations/:negotiationId/risk-review", requirePluginKey, (req, 
   res.json({ negotiation_id: negotiation.id, action, status, final_price: finalPrice, requires_owner_approval: requiresApproval });
 });
 
+router.post("/payments/initiate", requirePluginKey, async (req, res) => {
+  const { negotiation_id, phone } = req.body || {};
+  if (typeof negotiation_id !== "string" || !negotiation_id || typeof phone !== "string") {
+    return res.status(400).json({ error: { code: "INVALID_PAYMENT", message: "negotiation_id and phone are required." } });
+  }
+  const negotiation = db.prepare("SELECT id FROM negotiations WHERE id = ? AND marketplace_id = ?")
+    .get(negotiation_id, req.marketplace.id);
+  if (!negotiation) return res.status(404).json({ error: { code: "NEGOTIATION_NOT_FOUND", message: "Negotiation not found in this marketplace." } });
+
+  try {
+    const service = require("../payments/paymentService");
+    const payment = await service.createAndInitiatePayment(negotiation_id, phone);
+    // Marketplace ownership is assigned during payment-intent creation and propagated to tracking.
+    res.status(200).json({ payment: {
+      id: payment.id, negotiation_id: payment.negotiation_id, amount: payment.amount,
+      currency: payment.currency, provider: payment.provider, status: payment.status,
+      phone: payment.phone, provider_reference: payment.provider_reference,
+      mpesa_receipt: payment.mpesa_receipt, failure_reason: payment.failure_reason,
+      created_at: payment.created_at, updated_at: payment.updated_at
+    } });
+  } catch (error) {
+    const status = {
+      NEGOTIATION_NOT_FOUND: 404, NEGOTIATION_NOT_PAYABLE: 409,
+      OWNER_APPROVAL_REQUIRED: 403, RISK_REVIEW_REQUIRED: 403,
+      PAYMENT_CANCELLED: 409, INVALID_TRANSITION: 409,
+      MANUAL_RECONCILIATION_REQUIRED: 409
+    }[error.code] || 400;
+    res.status(status).json({ error: { code: error.code || "PAYMENT_ERROR", message: error.message || "Unable to initiate payment." } });
+  }
+});
+
+router.get("/payments", requirePluginKey, (req, res) => {
+  const payments = db.prepare(`
+    SELECT p.id, p.negotiation_id, p.amount, p.currency, p.provider, p.status,
+           p.phone, p.provider_reference, p.mpesa_receipt, p.failure_reason,
+           p.created_at, p.updated_at, n.item_description, n.quantity
+    FROM payment_intents p JOIN negotiations n ON n.id = p.negotiation_id
+    WHERE p.marketplace_id = ? ORDER BY p.created_at DESC LIMIT 500
+  `).all(req.marketplace.id);
+  res.json({ count: payments.length, payments });
+});
+
+router.get("/payments/:paymentId", requirePluginKey, (req, res) => {
+  const payment = db.prepare(`
+    SELECT p.id, p.negotiation_id, p.amount, p.currency, p.provider, p.status,
+           p.phone, p.provider_reference, p.mpesa_receipt, p.failure_reason,
+           p.created_at, p.updated_at, n.item_description, n.quantity, n.final_price
+    FROM payment_intents p JOIN negotiations n ON n.id = p.negotiation_id
+    WHERE p.id = ? AND p.marketplace_id = ?
+  `).get(req.params.paymentId, req.marketplace.id);
+  if (!payment) return res.status(404).json({ error: { code: "PAYMENT_NOT_FOUND", message: "Payment not found in this marketplace." } });
+  const events = db.prepare("SELECT type, created_at FROM payment_events WHERE payment_id = ? ORDER BY created_at ASC").all(payment.id);
+  res.json({ payment, events });
+});
+
+router.get("/transactions", requirePluginKey, (req, res) => {
+  const transactions = db.prepare(`
+    SELECT t.id, t.negotiation_id, t.transaction_status, t.created_at, t.updated_at,
+           n.item_description, n.quantity, n.final_price,
+           p.id AS payment_id, p.amount, p.currency, p.status AS payment_status,
+           p.provider, p.provider_reference, p.mpesa_receipt
+    FROM transaction_tracking t
+    JOIN negotiations n ON n.id = t.negotiation_id
+    LEFT JOIN payment_intents p ON p.id = t.payment_intent_id
+    WHERE t.marketplace_id = ? ORDER BY t.created_at DESC LIMIT 500
+  `).all(req.marketplace.id);
+  res.json({ count: transactions.length, transactions });
+});
+
 module.exports = router;
