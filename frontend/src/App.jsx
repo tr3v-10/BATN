@@ -23,12 +23,15 @@ import {
   ChevronRight,
   Zap,
   ShieldAlert,
-  RefreshCw
+  RefreshCw,
+  MessageCircle
 } from "lucide-react";
 
 import "./App.css";
+import VoiceChat from "./VoiceChat";
 
 const navigation = [
+  { label: "Voice Chat", icon: MessageCircle },
   { label: "Negotiation Lab", icon: Zap },
   { label: "Overview", icon: LayoutDashboard },
   { label: "Transactions", icon: ArrowLeftRight },
@@ -548,7 +551,9 @@ function App() {
                 </div>
               </section>
             </>
-                   ) : activePage === "Negotiation Lab" ? (
+          ) : activePage === "Voice Chat" ? (
+            <VoiceChat />
+          ) : activePage === "Negotiation Lab" ? (
             <NegotiationLab />
           ) : activePage === "Agents" ? (
             <AgentsPage />
