@@ -40,6 +40,8 @@ function migratePlugins(db) {
   ];
   for (const table of ownershipTables) ensureColumn(db, table, "marketplace_id", "TEXT");
   ensureColumn(db, "users", "external_id", "TEXT");
+  ensureColumn(db, "negotiations", "buyer_approved_at", "DATETIME");
+  ensureColumn(db, "negotiations", "seller_approved_at", "DATETIME");
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_users_marketplace ON users(marketplace_id);
