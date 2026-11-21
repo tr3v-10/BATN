@@ -2,17 +2,65 @@ import React, { useEffect, useState } from "react";
 import "./App.css";
 
 const API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:5000").replace(/\/$/, "");
+const PAYMENT_ERROR_COPY = {
+  INVALID_INPUT: "Enter a valid Kenyan M-Pesa phone number.",
+  NEGOTIATION_NOT_FOUND: "We couldn't find this deal. Refresh and try again.",
+  NEGOTIATION_NOT_PAYABLE: "This deal is not ready for payment yet.",
+  OWNER_APPROVAL_REQUIRED: "Owner approval is required before payment can begin.",
+  RISK_REVIEW_REQUIRED: "This deal needs risk clearance before payment.",
+  PAYMENT_CANCELLED: "This payment was cancelled. Contact support before trying again.",
+  INVALID_TRANSITION: "The payment status has changed. Refresh payment history.",
+  MANUAL_RECONCILIATION_REQUIRED: "We could not confirm whether money was deducted. Check your M-Pesa messages or contact support before retrying.",
+  RATE_LIMITED: "Too many attempts. Please wait a minute and try again.",
+  PROVIDER_CANCEL_UNSUPPORTED: "Payment cancellation is not supported by PayHero for this request."
+};
 async function request(path, options = {}) {
-  const response = await fetch(API + "/api" + path, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
-  });
+  let response;
+  try {
+    response = await fetch(API + "/api" + path, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    });
+  } catch {
+    throw new Error(path.startsWith("/payments")
+      ? "We couldn't reach the payment service. Check your connection and try again."
+      : "We couldn't reach the server. Check your connection and try again.");
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = typeof data.error === "string" ? data.error : data.error?.message || data.message || "Request failed (" + response.status + ")";
-    throw new Error(message);
+    const code = data.error?.code || data.code;
+    const isPaymentRequest = path.startsWith("/payments");
+    const message = (isPaymentRequest && PAYMENT_ERROR_COPY[code]) ||
+      (isPaymentRequest
+        ? "We couldn't complete the payment. Please try again or contact support."
+        : (typeof data.error === "string" ? data.error : data.error?.message || data.message || "Request failed (" + response.status + ")"));
+    const error = new Error(message);
+    error.code = code || "REQUEST_FAILED";
+    throw error;
   }
   return data;
+}
+function auditDescription(entry) {
+  let details = {};
+  try { details = typeof entry.details === "string" ? JSON.parse(entry.details) : (entry.details || {}); } catch {}
+  switch (entry.action) {
+    case "payment_created":
+      return "Payment created for " + money(details.amount) + ".";
+    case "payment_prompt_sent":
+      return "M-Pesa prompt sent to " + (details.phone || "the selected number") + " for " + money(details.amount) + ".";
+    case "payment_paid":
+      return "Payment received" + (details.mpesa_receipt ? ". Receipt: " + details.mpesa_receipt : ".") ;
+    case "payment_failed":
+      return "Payment failed: " + (details.failure_reason || "please check the payment status") + ".";
+    case "payment_retried":
+      return "Payment retry started (attempt " + (details.attempt || "next") + ").";
+    case "payment_cancelled":
+      return "Payment cancelled.";
+    case "payment_event_callback_received":
+      return "M-Pesa payment update received.";
+    default:
+      return nice(entry.action);
+  }
 }
 const money = value => "KES " + Number(value || 0).toLocaleString("en-KE");
 const nice = value => String(value || "unknown").replaceAll("_", " ");
@@ -147,7 +195,7 @@ export default function App() {
       <article><span>Flagged transactions</span><strong>{dashboard?.flaggedTransactions ?? "—"}</strong><small>Require attention</small></article>
     </div>
     <div className="panel"><div className="panel-title"><h2>Recent audit activity</h2><button className="link" onClick={() => setPage("Activity")}>View activity →</button></div>
-      {audit.length ? audit.slice(0, 5).map((x, i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{nice(x.action)}</strong><small>{x.actor || "System"} · {x.entity_type || "event"} · {x.created_at || ""}</small></div></div>) : <Empty>No audit activity recorded yet.</Empty>}
+      {audit.length ? audit.slice(0, 5).map((x, i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{auditDescription(x)}</strong><small>{x.actor || "System"} · {x.entity_type || "event"} · {x.created_at || ""}</small></div></div>) : <Empty>No audit activity recorded yet.</Empty>}
     </div>
     <Notice>Authentication, user sessions and role-based access are not implemented in the current backend. This workspace is an integration preview, not a secure production login.</Notice>
   </section> : null;
@@ -165,7 +213,7 @@ export default function App() {
         {page === "Negotiations" && <section><div className="page-head"><div><span className="eyebrow">LIVE BATN DATA</span><h1>Negotiations</h1><p>Records returned by the BATN negotiation engine.</p></div><Button onClick={() => setNewDeal(true)}>＋ New negotiation</Button></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel table-wrap"><table><thead><tr><th>Item</th><th>Buyer</th><th>Seller</th><th>Qty</th><th>Final unit price</th><th>Status</th></tr></thead><tbody>{negotiations.map(n => <tr key={n.id}><td><strong>{n.item_description}</strong><small>{n.created_at || n.id}</small></td><td>{n.buyer_name}</td><td>{n.seller_name}</td><td>{n.quantity}</td><td>{n.final_price ? money(n.final_price) : "—"}</td><td><span className="status">{nice(n.status)}</span></td></tr>)}</tbody></table>{!negotiations.length && <Empty>No negotiations recorded.</Empty>}</div></section>}
         {page === "Risk review" && <section><div className="page-head"><div><span className="eyebrow">RISK ENGINE</span><h1>Human review queue</h1><p>Only unreviewed risk assessments with decision “review” appear here.</p></div></div>{error && <Notice tone="error">{error}</Notice>}{reviews.length ? reviews.map(item => <article className="panel review-card" key={item.negotiation_id}><div><span className="eyebrow">RISK SCORE {item.risk_score} · {item.risk_level}</span><h2>{item.item_description} · {item.quantity} units</h2><p>{item.buyer_name} ↔ {item.seller_name}</p><small>{(item.flags || []).join(" · ")}</small></div><div className="actions"><Button onClick={() => review(item, "approve")}>Approve review</Button><Button kind="secondary" onClick={() => review(item, "reject")}>Reject</Button></div></article>) : <Empty>No risk reviews waiting.</Empty>}<Notice>Mandate-based “pending approval” negotiations are not currently exposed through a dedicated approval endpoint. This screen handles the backend’s risk-review queue only.</Notice></section>}
         {page === "Payments" && <section><div className="page-head"><div><span className="eyebrow">PAYMENT INTENTS</span><h1>Payments</h1><p>Pay approved deals and follow M-Pesa status.</p></div></div>{error && <Notice tone="error">{error}</Notice>}{message && <Notice tone="success">{message}</Notice>}<div className="panel"><h2>Approved deals ready for payment</h2>{negotiations.filter(n => n.status === "accepted").map(n => <div className="list-row" key={n.id}><span className="dot"></span><div><strong>{n.item_description} · {n.quantity} units</strong><small>{n.buyer_name} → {n.seller_name} · {money(Number(n.final_price) * Number(n.quantity))}</small></div><Button kind="secondary" onClick={() => setPayDeal(n)}>Pay now</Button></div>)}{!negotiations.some(n => n.status === "accepted") && <Empty>No approved deals are currently awaiting payment.</Empty>}</div><div className="panel table-wrap"><h2>Payment history</h2><table><thead><tr><th>Item</th><th>Parties</th><th>Amount</th><th>Provider</th><th>Phone</th><th>Receipt</th><th>Status</th><th>Action</th></tr></thead><tbody>{payments.map(p => <tr key={p.id}><td><strong>{p.item_description}</strong><small>{p.quantity} units</small></td><td>{p.buyer_name} → {p.seller_name}</td><td>{money(p.amount)}</td><td>{p.provider}</td><td>{p.phone || "—"}</td><td>{p.mpesa_receipt || "—"}</td><td><span className="status">{p.status}</span></td><td>{p.provider === "mock" && ({pending:"initiated",initiated:"processing",processing:"paid"})[p.status] ? <Button kind="secondary" onClick={() => advancePayment(p)}>Advance demo</Button> : "—"}</td></tr>)}</tbody></table>{!payments.length && <Empty>No payment intents yet.</Empty>}</div><Notice>Mock mode is for offline demonstrations. Select PAYMENT_PROVIDER=payhero only after configuring PayHero credentials and a public HTTPS callback URL.</Notice></section>}
-        {page === "Activity" && <section><div className="page-head"><div><span className="eyebrow">AUDIT & TRACKING</span><h1>Activity history</h1><p>Backend audit logs and transaction tracking records.</p></div></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel"><h2>Audit log</h2>{audit.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{nice(x.action)}</strong><small>{x.actor} · {x.entity_type} · {x.entity_id} · {x.created_at}</small></div></div>)}{!audit.length && <Empty>No audit records.</Empty>}</div><div className="panel"><h2>Transaction tracking</h2>{transactions.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{x.item_description} · {x.quantity} units</strong><small>{x.buyer_name} → {x.seller_name} · {nice(x.transaction_status)} · {x.created_at}</small></div></div>)}{!transactions.length && <Empty>No tracked transactions yet.</Empty>}</div></section>}
+        {page === "Activity" && <section><div className="page-head"><div><span className="eyebrow">AUDIT & TRACKING</span><h1>Activity history</h1><p>Backend audit logs and transaction tracking records.</p></div></div>{error && <Notice tone="error">{error}</Notice>}<div className="panel"><h2>Audit log</h2>{audit.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{auditDescription(x)}</strong><small>{x.actor} · {x.entity_type} · {x.entity_id} · {x.created_at}</small></div></div>)}{!audit.length && <Empty>No audit records.</Empty>}</div><div className="panel"><h2>Transaction tracking</h2>{transactions.map((x,i) => <div className="list-row" key={x.id || i}><span className="dot"></span><div><strong>{x.item_description} · {x.quantity} units</strong><small>{x.buyer_name} → {x.seller_name} · {nice(x.transaction_status)} · {x.created_at}</small></div></div>)}{!transactions.length && <Empty>No tracked transactions yet.</Empty>}</div></section>}
       </div>
     </main>
     {newDeal && <NewNegotiation agents={agents} onClose={() => setNewDeal(false)} onDone={() => { setNewDeal(false); setPage("Negotiations"); }} />}{payDeal && <PaymentFlow deal={payDeal} onClose={() => setPayDeal(null)} onUpdated={() => { load(); }} />}
