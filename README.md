@@ -63,11 +63,12 @@ The callback URL includes a secret path segment. Callback amounts and external r
 
 1. Start with `PAYMENT_PROVIDER=mock` and verify the dashboard and payment history.
 2. Run backend tests with `npm test`.
-3. For PayHero, obtain API credentials and the correct channel ID from the PayHero dashboard.
-4. Use a public HTTPS tunnel and verify PayHero can reach the callback route.
-5. Use PayHero's test credits/sandbox facilities if enabled for your account.
-6. Before any real transaction, test with **KES 1 to your own personal M-Pesa number**.
-7. Confirm the receipt in PayHero and the customer's M-Pesa message before testing larger amounts.
+3. Send a sample callback to a local server with `PAYHERO_CALLBACK_SECRET=... node scripts/simulate-payhero-callback.js <payment-id> 1` from the repository root.
+4. For PayHero, obtain API credentials and the correct channel ID from the PayHero dashboard.
+5. Use a public HTTPS tunnel and verify PayHero can reach the callback route.
+6. Use PayHero's test credits/sandbox facilities if enabled for your account.
+7. Before any real transaction, test with **KES 1 to your own personal M-Pesa number**.
+8. Confirm the receipt in PayHero and the customer's M-Pesa message before testing larger amounts.
 
 ## Known limitations
 
