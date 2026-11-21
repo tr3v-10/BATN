@@ -1,11 +1,20 @@
 const express = require("express");
 const crypto = require("crypto");
-const rateLimit = require("express-rate-limit");
 const db = require("../database/db");
 const service = require("../payments/paymentService");
 const router = express.Router();
-const initiateLimiter = rateLimit({ windowMs: 60000, limit: 5, standardHeaders: true, legacyHeaders: false });
-const retryLimiter = rateLimit({ windowMs: 60000, limit: 3, standardHeaders: true, legacyHeaders: false });
+function limiter(max) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const key = req.ip || req.socket.remoteAddress || "unknown";
+    const now = Date.now();
+    const recent = (hits.get(key) || []).filter(t => now - t < 60000);
+    if (recent.length >= max) return res.status(429).json({ error: { code: "RATE_LIMITED", message: "Too many attempts. Please wait a minute and try again." } });
+    recent.push(now); hits.set(key, recent); next();
+  };
+}
+const initiateLimiter = limiter(5);
+const retryLimiter = limiter(3);
 const fail = (res, status, code, message) => res.status(status).json({ error: { code, message } });
 
 router.post("/initiate", initiateLimiter, async (req, res) => {
