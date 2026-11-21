@@ -187,9 +187,9 @@ async function handleCallback(payload) {
     throw Object.assign(new Error("Payment amount mismatch."), { code: "AMOUNT_MISMATCH" });
   }
 
+  if (payment.status === "paid") return payment;
   addEvent(payment.id, "callback_received", payload);
   db.prepare("UPDATE payment_intents SET callback_received_at = CURRENT_TIMESTAMP WHERE id = ?").run(payment.id);
-  if (payment.status === "paid") return payment;
 
   const status = String(parsed.status || "").toUpperCase();
   let next = null;
