@@ -1,310 +1,66 @@
-
 const express = require("express");
-const { randomUUID } = require("crypto");
+const crypto = require("crypto");
+const rateLimit = require("express-rate-limit");
 const db = require("../database/db");
-
+const service = require("../payments/paymentService");
 const router = express.Router();
+const initiateLimiter = rateLimit({ windowMs: 60000, limit: 5, standardHeaders: true, legacyHeaders: false });
+const retryLimiter = rateLimit({ windowMs: 60000, limit: 3, standardHeaders: true, legacyHeaders: false });
+const fail = (res, status, code, message) => res.status(status).json({ error: { code, message } });
 
-// VALID PAYMENT STATUS TRANSITIONS
-const transitions = {
-  pending: ["initiated", "cancelled"],
-  initiated: ["processing", "failed", "cancelled"],
-  processing: ["paid", "failed"],
-  paid: [],
-  failed: [],
-  cancelled: []
-};
-
-// CREATE PAYMENT INTENT
-router.post("/initiate", (req, res) => {
+router.post("/initiate", initiateLimiter, async (req, res) => {
   try {
-    const { negotiation_id, idempotency_key } = req.body || {};
-
-    if (!negotiation_id || !idempotency_key) {
-      return res.status(400).json({
-        message: "negotiation_id and idempotency_key are required."
-      });
-    }
-
-    const existing = db.prepare(`
-      SELECT * FROM payment_intents
-      WHERE negotiation_id = ?
-    `).get(negotiation_id);
-
-    if (existing) {
-      return res.status(409).json({
-        message: "A payment intent already exists.",
-        payment: existing
-      });
-    }
-
-    const negotiation = db.prepare(`
-      SELECT * FROM negotiations WHERE id = ?
-    `).get(negotiation_id);
-
-    if (!negotiation) {
-      return res.status(404).json({
-        message: "Negotiation not found."
-      });
-    }
-
-    if (negotiation.status !== "accepted") {
-      return res.status(403).json({
-        message: "Negotiation must be accepted before payment."
-      });
-    }
-
-    if (!negotiation.final_price || negotiation.final_price <= 0) {
-      return res.status(400).json({
-        message: "Negotiation has no valid final price."
-      });
-    }
-
-    const buyer = db.prepare(`
-      SELECT a.status, m.max_total_amount, m.max_quantity,
-             m.requires_approval
-      FROM agents a
-      JOIN agent_mandates m ON m.agent_id = a.id
-      WHERE a.id = ?
-    `).get(negotiation.buyer_agent_id);
-
-    const seller = db.prepare(`
-      SELECT a.status, m.max_total_amount, m.max_quantity,
-             m.requires_approval
-      FROM agents a
-      JOIN agent_mandates m ON m.agent_id = a.id
-      WHERE a.id = ?
-    `).get(negotiation.seller_agent_id);
-
-    if (!buyer || !seller) {
-      return res.status(403).json({
-        message: "Both agents must have valid mandates."
-      });
-    }
-
-    if (buyer.status !== "active" || seller.status !== "active") {
-      return res.status(403).json({
-        message: "Both agents must be active."
-      });
-    }
-
-    const totalAmount =
-      negotiation.final_price * negotiation.quantity;
-
-    if (
-      negotiation.quantity > buyer.max_quantity ||
-      negotiation.quantity > seller.max_quantity ||
-      totalAmount > buyer.max_total_amount ||
-      totalAmount > seller.max_total_amount
-    ) {
-      return res.status(403).json({
-        message: "Transaction exceeds mandate limits."
-      });
-    }
-
-    if (buyer.requires_approval || seller.requires_approval) {
-      return res.status(403).json({
-        message: "Owner approval is required."
-      });
-    }
-
-    const paymentId = randomUUID();
-
-    const createPayment = db.transaction(() => {
-      db.prepare(`
-        INSERT INTO payment_intents (
-          id, negotiation_id, buyer_agent_id,
-          seller_agent_id, amount, currency,
-          provider, idempotency_key, status
-        )
-        VALUES (?, ?, ?, ?, ?, 'KES', 'mock', ?, 'pending')
-      `).run(
-        paymentId,
-        negotiation.id,
-        negotiation.buyer_agent_id,
-        negotiation.seller_agent_id,
-        totalAmount,
-        idempotency_key
-      );
-
-      db.prepare(`
-        INSERT INTO audit_logs (
-          id, actor, action, entity_type,
-          entity_id, details
-        )
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        randomUUID(),
-        "BATN Payment Engine",
-        "payment_intent_created",
-        "payment_intent",
-        paymentId,
-        JSON.stringify({
-          negotiation_id: negotiation.id,
-          amount: totalAmount,
-          provider: "mock"
-        })
-      );
-    });
-
-    createPayment();
-
-    const payment = db.prepare(`
-      SELECT * FROM payment_intents WHERE id = ?
-    `).get(paymentId);
-
-    return res.status(201).json({
-      message: "Simulated payment intent created.",
-      payment
-    });
-
-  } catch (error) {
-    console.error("Payment initiation error:", error);
-
-    return res.status(500).json({
-      message: "Payment initiation failed.",
-      error: error.message,
-      code: error.code || null
-    });
+    const { negotiationId, phone } = req.body || {};
+    if (typeof negotiationId !== "string" || !negotiationId || typeof phone !== "string") return fail(res, 400, "INVALID_INPUT", "A negotiation ID and valid M-Pesa phone number are required.");
+    const payment = await service.createAndInitiatePayment(negotiationId, phone);
+    return res.status(200).json({ payment });
+  } catch (e) {
+    const map = { NEGOTIATION_NOT_FOUND:404, NEGOTIATION_NOT_PAYABLE:409, OWNER_APPROVAL_REQUIRED:403, RISK_REVIEW_REQUIRED:403, PAYMENT_CANCELLED:409, INVALID_TRANSITION:409 };
+    return fail(res, map[e.code] || 400, e.code || "PAYMENT_ERROR", e.message || "Unable to initiate payment.");
   }
 });
-
-// GET ALL PAYMENT INTENTS
 router.get("/", (req, res) => {
   try {
-    const payments = db.prepare(`
-      SELECT p.*, 
-             n.item_description, n.quantity,
-             a.name AS buyer_name,
-             s.name AS seller_name
-      FROM payment_intents p
-      JOIN negotiations n ON n.id = p.negotiation_id
-      JOIN agents a ON a.id = p.buyer_agent_id
-      JOIN agents s ON s.id = p.seller_agent_id
-      ORDER BY p.created_at DESC
-    `).all();
-
-    res.json({
-      count: payments.length,
-      payments
-    });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      message: "Could not retrieve payments."
-    });
-  }
+    const clauses = [], params = [];
+    if (req.query.status) { clauses.push("p.status = ?"); params.push(req.query.status); }
+    if (req.query.date) { clauses.push("date(p.created_at) = date(?)"); params.push(req.query.date); }
+    const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+    const payments = db.prepare(`SELECT p.*, n.item_description, n.quantity, b.name AS buyer_name, s.name AS seller_name
+      FROM payment_intents p JOIN negotiations n ON n.id=p.negotiation_id
+      JOIN agents b ON b.id=p.buyer_agent_id JOIN agents s ON s.id=p.seller_agent_id
+      ${where} ORDER BY p.created_at DESC`).all(...params);
+    res.json({ count: payments.length, payments });
+  } catch { fail(res, 500, "PAYMENTS_UNAVAILABLE", "Unable to retrieve payments."); }
 });
-
-// GET SINGLE PAYMENT
 router.get("/:id", (req, res) => {
-  try {
-    const payment = db.prepare(`
-      SELECT * FROM payment_intents WHERE id = ?
-    `).get(req.params.id);
-
-    if (!payment) {
-      return res.status(404).json({
-        message: "Payment not found."
-      });
-    }
-
-    res.json({ payment });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      message: "Could not retrieve payment."
-    });
-  }
+  const payment = service.getPayment(req.params.id);
+  if (!payment) return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found.");
+  const events = db.prepare("SELECT id,type,created_at FROM payment_events WHERE payment_id=? ORDER BY created_at").all(payment.id);
+  const negotiation = db.prepare("SELECT id,item_description,quantity,final_price,status FROM negotiations WHERE id=?").get(payment.negotiation_id);
+  res.json({ payment, events, negotiation });
 });
-
-// SIMULATE PAYMENT STATUS TRANSITION
-router.patch("/:id/status", (req, res) => {
+router.post("/:id/retry", retryLimiter, async (req, res) => {
+  const payment = service.getPayment(req.params.id);
+  if (!payment) return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found.");
+  if (payment.status !== "failed") return fail(res, 409, "RETRY_NOT_ALLOWED", "Only failed payments can be retried.");
   try {
-    const { status, note } = req.body || {};
-
-    const payment = db.prepare(`
-      SELECT * FROM payment_intents WHERE id = ?
-    `).get(req.params.id);
-
-    if (!payment) {
-      return res.status(404).json({
-        message: "Payment not found."
-      });
-    }
-
-    // Simulated provider only
-    if (payment.provider !== "mock") {
-      return res.status(403).json({
-        message: "Manual status updates are disabled for real providers."
-      });
-    }
-
-    if (!transitions[payment.status]?.includes(status)) {
-      return res.status(400).json({
-        message: "Invalid payment status transition.",
-        current_status: payment.status,
-        requested_status: status,
-        allowed: transitions[payment.status]
-      });
-    }
-
-    const updatePayment = db.transaction(() => {
-      let providerReference = payment.provider_reference;
-
-      if (status === "initiated" && !providerReference) {
-        providerReference = `MOCK-${randomUUID()}`;
-      }
-
-      db.prepare(`
-        UPDATE payment_intents
-        SET status = ?,
-            provider_reference = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(status, providerReference, payment.id);
-
-      db.prepare(`
-        INSERT INTO audit_logs (
-          id, actor, action, entity_type,
-          entity_id, details
-        )
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        randomUUID(),
-        "BATN Mock Payment Simulator",
-        "payment_status_changed",
-        "payment_intent",
-        payment.id,
-        JSON.stringify({
-          previous_status: payment.status,
-          new_status: status,
-          note: note || null
-        })
-      );
-    });
-
-    updatePayment();
-
-    const updatedPayment = db.prepare(`
-      SELECT * FROM payment_intents WHERE id = ?
-    `).get(payment.id);
-
-    res.json({
-      message: "Simulated payment status updated.",
-      payment: updatedPayment
-    });
-
-  } catch (error) {
-    console.error("Payment status update error:", error);
-
-    res.status(500).json({
-      message: "Could not update payment status.",
-      error: error.message
-    });
-  }
+    const updated = await service.createAndInitiatePayment(payment.negotiation_id, req.body?.phone || "");
+    res.json({ payment: updated });
+  } catch (e) { fail(res, 400, e.code || "RETRY_FAILED", e.message || "Unable to retry payment."); }
 });
-
+router.post("/:id/cancel", (req, res) => {
+  const payment = service.getPayment(req.params.id);
+  if (!payment) return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found.");
+  return fail(res, 501, "PROVIDER_CANCEL_UNSUPPORTED", "PayHero cancellation is not available through the verified API contract.");
+});
+router.post("/callback/:secret", (req, res) => {
+  const expected = process.env.PAYHERO_CALLBACK_SECRET || "";
+  const received = req.params.secret || "";
+  if (!expected || received.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(received), Buffer.from(expected))) return res.status(200).json({ received: true });
+  res.status(200).json({ received: true });
+  setImmediate(async () => {
+    try { await service.handleCallback(req.body); }
+    catch (e) { console.error("Payment callback rejected:", e.code || "CALLBACK_ERROR"); }
+  });
+});
 module.exports = router;
