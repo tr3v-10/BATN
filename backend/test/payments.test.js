@@ -12,6 +12,7 @@ process.env.PAYMENT_PROVIDER = "mock";
 const db = require("../database/db");
 const { normalizeKenyanPhone, maskKenyanPhone, validateKesAmount } = require("../payments/phone");
 const service = require("../payments/paymentService");
+test.after(() => { db.close(); fs.rmSync(tempDir, { recursive: true, force: true }); });
 
 function fixture() {
   const user1 = randomUUID(), user2 = randomUUID();
@@ -78,4 +79,12 @@ test("invalid state transition is rejected", () => {
   const negotiationId = fixture();
   assert.deepEqual(service.transitions.pending, ["initiated", "failed", "cancelled"]);
   assert.equal(service.transitions.paid.length, 0);
+});
+
+test("invalid state transition is rejected and audited", async () => {
+  const negotiationId = fixture();
+  const payment = await service.createAndInitiatePayment(negotiationId, "0712345678");
+  assert.throws(() => service.transition(payment, "pending"), { code: "INVALID_TRANSITION" });
+  assert.equal(service.getPayment(payment.id).status, "initiated");
+  assert.ok(db.prepare("SELECT 1 FROM payment_events WHERE payment_id=? AND type='invalid_transition'").get(payment.id));
 });
