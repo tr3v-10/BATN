@@ -8,7 +8,10 @@ async function request(path, options = {}) {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) }
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || data.message || "Request failed (" + response.status + ")");
+  if (!response.ok) {
+    const message = typeof data.error === "string" ? data.error : data.error?.message || data.message || "Request failed (" + response.status + ")";
+    throw new Error(message);
+  }
   return data;
 }
 const money = value => "KES " + Number(value || 0).toLocaleString("en-KE");
